@@ -1,5 +1,6 @@
 package org.huxerui.clion.run;
 
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.intellij.execution.process.CapturingProcessHandler;
 import org.huxerui.clion.cli.HuxerUICommand;
@@ -35,24 +36,29 @@ public final class AndroidDeviceAbis {
             if (output.isTimeout()) {
                 return null;
             }
-            var plan = JsonParser.parseString(output.getStdout()).getAsJsonObject();
-            if (plan.get("schema").getAsInt() == 1) {
-                for (var item : plan.getAsJsonArray("checks")) {
-                    var check = item.getAsJsonObject();
-                    if (check.get("id").getAsString().equals("android.platform_tools")
-                            && check.get("status").getAsString().equals("ready") && check.has("path")) {
-                        Path path = Path.of(check.get("path").getAsString());
-                        return path.isAbsolute() && Files.isRegularFile(path) ? path : null;
-                    }
-                }
-            }
+            return FindTool(JsonParser.parseString(output.getStdout()).getAsJsonObject(), "android.platform_tools");
         } catch (com.intellij.execution.ExecutionException | RuntimeException ignored) {
             // The SDK default remains available when the device tool cannot be resolved.
         }
         return null;
     }
 
-    private static List<String> ReadAbis(Path adb, Path root, String device) {
+    static @Nullable Path FindTool(JsonObject plan, String id) {
+        if (plan.get("schema").getAsInt() != 1) {
+            return null;
+        }
+        for (var item : plan.getAsJsonArray("checks")) {
+            var check = item.getAsJsonObject();
+            if (check.get("id").getAsString().equals(id)
+                    && check.get("status").getAsString().equals("ready") && check.has("path")) {
+                Path path = Path.of(check.get("path").getAsString());
+                return path.isAbsolute() && Files.isRegularFile(path) ? path : null;
+            }
+        }
+        return null;
+    }
+
+    static List<String> ReadAbis(Path adb, Path root, String device) {
         for (String property : List.of("ro.product.cpu.abilist", "ro.product.cpu.abi")) {
             try {
                 var command = HuxerUICommand.LocalCommand(adb.toString(), root,

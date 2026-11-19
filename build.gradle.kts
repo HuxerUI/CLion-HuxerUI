@@ -24,6 +24,7 @@ dependencies {
             local(clionPath.get())
         }
         bundledPlugin("com.intellij.cmake")
+        bundledPlugin("com.intellij.nativeDebug")
         bundledPlugin("org.jetbrains.plugins.clion.radler")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
         pluginVerifier()

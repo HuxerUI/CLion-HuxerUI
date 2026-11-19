@@ -228,13 +228,16 @@ public final class HuxerUIRunConfiguration extends RunConfigurationBase<RunConfi
     }
 
     static HuxerUIBuildOptions MatchAndroidAbi(HuxerUIBuildOptions options, HuxerUIDevice device) {
-        boolean automatic = options.abis().isBlank();
-        List<String> requested = automatic ? HuxerUIBuildOptions.Abis("android")
-                : Arrays.stream(options.abis().split(",")).map(String::strip).toList();
-        String abi = device.abis().stream().filter(requested::contains).findFirst().orElseThrow(
-                () -> new IllegalArgumentException("No compatible Android ABI for " + device.DisplayName()));
-        return automatic
+        String abi = PreferredAndroidAbi(options, device);
+        return options.abis().isBlank()
                 ? new HuxerUIBuildOptions(options.configuration(), abi, options.optimization(), options.lto()) : options;
+    }
+
+    static String PreferredAndroidAbi(HuxerUIBuildOptions options, HuxerUIDevice device) {
+        List<String> requested = options.abis().isBlank() ? HuxerUIBuildOptions.Abis("android")
+                : Arrays.stream(options.abis().split(",")).map(String::strip).toList();
+        return device.abis().stream().filter(requested::contains).findFirst().orElseThrow(
+                () -> new IllegalArgumentException("No compatible Android ABI for " + device.DisplayName()));
     }
 
     static List<String> BuildRunArguments(String platform, String device_id, String profile) {

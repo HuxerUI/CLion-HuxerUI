@@ -43,6 +43,9 @@ final class HuxerUIRunConfigurationTest {
                 new HuxerUIBuildOptions("debug"), emulator).abis());
         assertThrows(IllegalArgumentException.class, () -> HuxerUIRunConfiguration.MatchAndroidAbi(
                 new HuxerUIBuildOptions("debug", "arm64-v8a", "", ""), emulator));
+        var multi_abi = new HuxerUIBuildOptions("debug", "arm64-v8a,x86_64", "", "");
+        assertEquals("x86_64", HuxerUIRunConfiguration.PreferredAndroidAbi(multi_abi, emulator));
+        assertEquals(multi_abi, HuxerUIRunConfiguration.MatchAndroidAbi(multi_abi, emulator));
     }
 
     @Test
