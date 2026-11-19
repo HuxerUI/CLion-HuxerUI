@@ -1,5 +1,6 @@
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij">
         <programRunner implementation="org.huxerui.clion.run.HuxerUIAndroidDebugRunner"/>
+        <programRunner implementation="org.huxerui.clion.run.HuxerUIIosDebugRunner"/>
     </extensions>
 </idea-plugin>

@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
-final class AndroidDebugSession implements AutoCloseable {
+final class AndroidDebugSession implements HuxerUIMobileDebugRunner.Session {
     private static final Pattern traced_process = Pattern.compile("(?m)^TracerPid:\\s*[1-9][0-9]*$");
     private static final int command_timeout = 10_000;
 
@@ -51,7 +51,7 @@ final class AndroidDebugSession implements AutoCloseable {
         device_ = device;
         package_id_ = package_id;
         symbols_ = symbols;
-        compiler_root_ = FindCompilerRoot(root, symbols);
+        compiler_root_ = HuxerUIMobileDebugRunner.FindCompilerRoot(root, symbols);
         work_ = Files.createTempDirectory("huxerui-android-debug-");
     }
 
@@ -108,15 +108,6 @@ final class AndroidDebugSession implements AutoCloseable {
 
     private static JsonObject ReadJson(Path path) throws IOException {
         return JsonParser.parseString(Files.readString(path)).getAsJsonObject();
-    }
-
-    private static Path FindCompilerRoot(Path project, Path symbols) throws IOException {
-        for (Path directory = symbols.getParent(); directory != null; directory = directory.getParent()) {
-            if (Files.isSameFile(directory, project)) {
-                return directory;
-            }
-        }
-        return project;
     }
 
     private static Path FindLldbServer(Path ndk, String abi) throws IOException, ExecutionException {

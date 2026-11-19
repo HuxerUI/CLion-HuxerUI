@@ -6,7 +6,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.clion</depends>
     <depends>com.intellij.cmake</depends>
-    <depends optional="true" config-file="huxerui-android-debug.xml">com.intellij.nativeDebug</depends>
+    <depends optional="true" config-file="huxerui-mobile-debug.xml">com.intellij.nativeDebug</depends>
     <depends optional="true" config-file="huxerui-nova.xml">org.jetbrains.plugins.clion.radler</depends>
 
     <extensions defaultExtensionNs="com.intellij">

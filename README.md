@@ -24,6 +24,7 @@ To open an existing project, use **File → Open** and select its root directory
 - In the Run toolbar, use **Run Target** to choose the local desktop, Web, or an Android or iOS device. The button displays the selected target. Ready devices appear first within each platform. Use **Refresh Devices** to scan again.
 - Use CLion's **Run** and **Debug** for desktop CMake apps. Web and mobile targets run through the HuxerUI CLI. Use **Run → HuxerUI Run with Watch** to rebuild and relaunch a CMake app when sources change.
 - To debug Android C++ code, select the device in **Run Target** and click **Debug**. CLion builds and launches a Debug APK for the device's ABI and attaches its bundled LLDB. The Android NDK and ADB must be available. Set a breakpoint in code you can trigger after LLDB attaches.
+- To debug iOS C++ code on macOS, select a booted Xcode simulator in **Run Target**, set your breakpoints, and click **Debug**. The plugin builds and installs a Debug app and attaches CLion's bundled LLDB before the app starts running.
 - Use **Build → HuxerUI Build and Package** for Debug and Release builds, packaging, and artifact access. **Build with Options** and **Package with Options** let you set ABIs, optimization, and LTO. Compiler diagnostics in the **Build** window link to their source locations.
 - Use **Tools → HuxerUI → Toolchain** to diagnose the environment or preview and apply a supported toolchain setup plan. CLion project trust controls access to project tools.
 
