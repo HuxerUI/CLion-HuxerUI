@@ -1,11 +1,8 @@
 package org.huxerui.clion.sdk;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.util.io.HttpRequests;
+import com.intellij.util.io.RequestBuilder;
 import org.huxerui.clion.settings.HuxerUISettings;
 
 import java.io.BufferedInputStream;
@@ -19,7 +16,6 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
@@ -29,39 +25,29 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public final class SdkInstaller {
-    private static final String latest_release = "https://api.github.com/repos/HuxerUI/HuxerUI/releases/latest";
+    private static final String releases = "https://github.com/HuxerUI/HuxerUI/releases";
 
     public Path InstallLatest(ProgressIndicator indicator) throws IOException {
-        indicator.setText("Reading the latest HuxerUI release");
-        String body;
-        try {
-            body = HttpRequests.request(latest_release)
-                    .useProxy(true)
-                    .followRedirects(true)
-                    .connectTimeout(20_000)
-                    .readTimeout(30_000)
-                    .accept("application/vnd.github+json")
-                    .userAgent("HuxerUI-CLion-Plugin")
-                    .tuner(connection -> connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28"))
-                    .readString(indicator);
-        } catch (HttpRequests.HttpStatusException error) {
-            if (error.getStatusCode() == 404) {
-                throw new IOException("HuxerUI has no published SDK release yet.", error);
-            }
-            throw new IOException("GitHub release request failed with HTTP " + error.getStatusCode(), error);
-        }
+        return Install("", indicator);
+    }
 
-        JsonObject release = JsonParser.parseString(body).getAsJsonObject();
-        String version = release.get("tag_name").getAsString();
-        List<ReleaseAssetSelector.Asset> assets = ParseAssets(release.getAsJsonArray("assets"));
-        ReleaseAssetSelector.Asset asset = ReleaseAssetSelector.Select(assets, HostPlatform.Current())
-                .orElseThrow(() -> new IOException("The latest release has no SDK for " + HostPlatform.Current()));
-        if (asset.digest() == null || !asset.digest().startsWith("sha256:")) {
-            throw new IOException("SDK asset is missing its GitHub SHA-256 digest: " + asset.name());
-        }
+    public Path Install(String requested_version, ProgressIndicator indicator) throws IOException {
+        return Install(requested_version, HuxerUISettings.InstallDirectory(), indicator);
+    }
 
-        Path sdk_root = Path.of(System.getProperty("user.home"), ".huxerui", "sdk");
-        Path destination = sdk_root.resolve(SafeVersion(version));
+    Path Install(String requested_version, Path sdk_root, ProgressIndicator indicator) throws IOException {
+        if (!requested_version.isEmpty() && !requested_version.matches("v?\\d+\\.\\d+\\.\\d+")) {
+            throw new IOException("Enter an exact release version, for example 0.5.0");
+        }
+        indicator.setText("Reading the HuxerUI release");
+        String tag = requested_version.isEmpty() ? LatestReleaseTag() : "v" + requested_version.replaceFirst("^v", "");
+        String version = tag.substring(1);
+        if (!HuxerUISdk.SupportsVersion(version)) {
+            String release_label = requested_version.isEmpty() ? "The latest HuxerUI release is "
+                    : "The requested HuxerUI release is ";
+            throw new IOException(release_label + tag + ". Use SDK 0.5.0 or newer, or select a source checkout.");
+        }
+        Path destination = sdk_root.resolve(tag);
         if (IsUsableSdk(destination)) {
             return destination;
         }
@@ -69,24 +55,34 @@ public final class SdkInstaller {
         if (Files.exists(destination)) {
             throw new IOException("SDK destination already exists but is incomplete: " + destination);
         }
-        Path archive = Files.createTempFile(sdk_root, ".download-", asset.name().endsWith(".zip") ? ".zip" : ".tar.gz");
+        HostPlatform host = HostPlatform.Current();
+        String asset = host.SdkArchiveName(version);
+        String download_url = releases + "/download/" + tag + "/" + asset;
+        String digest = ReadDigest(download_url, asset, indicator);
+        Path archive = Files.createTempFile(sdk_root, ".download-", host.archive_suffix());
         Path staging = sdk_root.resolve(".install-" + UUID.randomUUID());
         try {
             indicator.setText("Downloading HuxerUI SDK " + version);
-            Download(asset.download_url(), archive, indicator);
-            VerifyDigest(archive, asset.digest().substring("sha256:".length()));
+            Download(download_url, archive, indicator);
+            VerifyDigest(archive, digest);
             indicator.setText("Installing HuxerUI SDK " + version);
             Files.createDirectories(staging);
-            if (asset.name().endsWith(".zip")) {
+            if (asset.endsWith(".zip")) {
                 ExtractZip(archive, staging, indicator);
             } else {
                 ExtractTarGz(archive, staging, indicator);
             }
             Path extracted_home = FindSdkHome(staging);
             MakeCliExecutable(extracted_home);
-            Move(extracted_home, destination);
-            if (!IsUsableSdk(destination)) {
+            if (!IsUsableSdk(extracted_home)) {
                 throw new IOException("Installed archive does not contain the standard HUXERUI_HOME layout");
+            }
+            try {
+                Move(extracted_home, destination);
+            } catch (java.nio.file.FileAlreadyExistsException error) {
+                if (!IsUsableSdk(destination)) {
+                    throw error;
+                }
             }
             return destination;
         } finally {
@@ -97,29 +93,47 @@ public final class SdkInstaller {
         }
     }
 
-    private static List<ReleaseAssetSelector.Asset> ParseAssets(JsonArray values) {
-        List<ReleaseAssetSelector.Asset> assets = new ArrayList<>();
-        for (JsonElement value : values) {
-            JsonObject asset = value.getAsJsonObject();
-            JsonElement digest = asset.get("digest");
-            assets.add(new ReleaseAssetSelector.Asset(
-                    asset.get("name").getAsString(),
-                    asset.get("browser_download_url").getAsString(),
-                    digest == null || digest.isJsonNull() ? null : digest.getAsString(),
-                    asset.get("size").getAsLong()
-            ));
+    private static String LatestReleaseTag() throws IOException {
+        String url = ReleaseRequest(HttpRequests.head(releases + "/latest")).connect(
+                request -> request.getConnection().getURL().toExternalForm());
+        String prefix = releases + "/tag/";
+        if (!url.startsWith(prefix)) {
+            throw new IOException("Could not find the latest HuxerUI release.");
         }
-        return assets;
+        String tag = url.substring(prefix.length());
+        if (!tag.matches("v\\d+\\.\\d+\\.\\d+")) {
+            throw new IOException("Unexpected HuxerUI release tag: " + tag);
+        }
+        return tag;
+    }
+
+    private static String ReadDigest(String url, String asset, ProgressIndicator indicator) throws IOException {
+        String body;
+        try {
+            body = ReleaseRequest(HttpRequests.request(url + ".sha256")).readString(indicator);
+        } catch (HttpRequests.HttpStatusException error) {
+            if (error.getStatusCode() == 404) {
+                throw new IOException("The SDK or its SHA-256 file is missing from the release: " + asset, error);
+            }
+            throw error;
+        }
+        String[] fields = body.strip().split("\\s+", 2);
+        if (fields.length != 2 || !fields[0].matches("[0-9a-fA-F]{64}")
+                || !fields[1].replaceFirst("^\\*", "").equals(asset)) {
+            throw new IOException("Invalid SHA-256 file for " + asset);
+        }
+        return fields[0];
+    }
+
+    private static RequestBuilder ReleaseRequest(RequestBuilder request) {
+        return request.useProxy(true).followRedirects(true).connectTimeout(20_000)
+                .readTimeout(30_000).userAgent("HuxerUI-CLion-Plugin");
     }
 
     private static void Download(String url, Path destination, ProgressIndicator indicator) throws IOException {
-        HttpRequests.request(url)
-                .useProxy(true)
-                .followRedirects(true)
-                .connectTimeout(20_000)
+        ReleaseRequest(HttpRequests.request(url))
                 .readTimeout(600_000)
                 .accept("application/octet-stream")
-                .userAgent("HuxerUI-CLion-Plugin")
                 .saveToFile(destination, indicator);
     }
 
@@ -181,6 +195,9 @@ public final class SdkInstaller {
                     try (var file = Files.newOutputStream(output)) {
                         CopyExactly(input, file, size);
                     }
+                    if ((TarOctal(header, 100, 8) & 0111) != 0) {
+                        MakeExecutable(output);
+                    }
                 } else {
                     SkipExactly(input, size);
                 }
@@ -215,15 +232,19 @@ public final class SdkInstaller {
         if (cli == null) {
             return;
         }
+        MakeExecutable(cli);
+    }
+
+    private static void MakeExecutable(Path file) throws IOException {
         try {
-            Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(cli);
+            Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(file);
             permissions.add(PosixFilePermission.OWNER_EXECUTE);
             permissions.add(PosixFilePermission.GROUP_EXECUTE);
             permissions.add(PosixFilePermission.OTHERS_EXECUTE);
-            Files.setPosixFilePermissions(cli, permissions);
+            Files.setPosixFilePermissions(file, permissions);
         } catch (UnsupportedOperationException ignored) {
-            if (!cli.toFile().setExecutable(true, false)) {
-                throw new IOException("Unable to make the HuxerUI CLI executable: " + cli);
+            if (!file.toFile().setExecutable(true, false)) {
+                throw new IOException("Unable to make the SDK file executable: " + file);
             }
         }
     }
@@ -234,13 +255,6 @@ public final class SdkInstaller {
             throw new IOException("SDK archive contains an unsafe path: " + name);
         }
         return output;
-    }
-
-    private static String SafeVersion(String version) throws IOException {
-        if (!version.matches("[A-Za-z0-9._-]+")) {
-            throw new IOException("Release tag cannot be used as an SDK directory: " + version);
-        }
-        return version;
     }
 
     private static void Move(Path source, Path destination) throws IOException {

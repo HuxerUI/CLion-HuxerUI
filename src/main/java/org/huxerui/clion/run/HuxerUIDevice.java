@@ -2,7 +2,13 @@ package org.huxerui.clion.run;
 
 import org.huxerui.clion.PlatformNames;
 
-public record HuxerUIDevice(String platform, String id, String name, String state) {
+import java.util.List;
+
+public record HuxerUIDevice(String platform, String id, String name, String state, List<String> abis) {
+    public HuxerUIDevice(String platform, String id, String name, String state) {
+        this(platform, id, name, state, List.of());
+    }
+
     public boolean IsReady() {
         return state.equals("ready");
     }

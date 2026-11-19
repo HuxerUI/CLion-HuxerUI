@@ -7,6 +7,7 @@ group = "org.huxerui"
 version = "0.1.16"
 
 val clionPath = providers.gradleProperty("clionPath")
+val javaToolchainVersion = providers.gradleProperty("javaToolchainVersion").map(String::toInt).orElse(21)
 
 repositories {
     mavenCentral()
@@ -34,7 +35,7 @@ dependencies {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
+        languageVersion = javaToolchainVersion.map(JavaLanguageVersion::of)
     }
 }
 
@@ -48,7 +49,7 @@ intellijPlatform {
         """.trimIndent()
         ideaVersion {
             sinceBuild = "253"
-            untilBuild = "262.*"
+            untilBuild = provider { null }
         }
         vendor {
             name = "HuxerUI"

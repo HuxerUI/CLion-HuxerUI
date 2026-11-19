@@ -3,13 +3,17 @@ package org.huxerui.clion.project;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBTextField;
+import com.intellij.util.execution.ParametersListUtil;
 import com.jetbrains.cidr.cpp.cmake.projectWizard.generators.CLionProjectGenerator;
+import org.huxerui.clion.sdk.HuxerUISdk;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.swing.JComponent;
+import javax.swing.JComboBox;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Rectangle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -42,6 +46,7 @@ final class HuxerUIDirectoryProjectGeneratorTest {
 
         JBTextField application_id = FindTextField(component, "huxerui.application_id");
         assertNotNull(application_id);
+        peer.sdk_.SetDiscovered(List.of(Sdk("first")), null);
         application_id.setText("dev.example.myapp");
         assertEquals("dev.example.myapp", peer.getSettings().project_id());
         assertNull(peer.validate());
@@ -51,21 +56,75 @@ final class HuxerUIDirectoryProjectGeneratorTest {
     }
 
     @Test
-    void moduleGeneratorIsASeparateEntryWithInteractivePlatforms() {
-        HuxerUIModuleProjectGenerator generator = new HuxerUIModuleProjectGenerator();
+    void appWebTargetFitsInANarrowWizardAndCanBeSelected() {
+        var peer = new HuxerUIDirectoryProjectGenerator.Peer(true);
+        JComponent component = peer.getComponent(new TextFieldWithBrowseButton(), () -> {});
+        JBCheckBox web = FindCheckBox(component, "huxerui.platform.web");
+        assertNotNull(web);
+
+        Container platforms = web.getParent();
+        platforms.setSize(300, platforms.getPreferredSize().height);
+        platforms.doLayout();
+        assertTrue(new Rectangle(platforms.getSize()).contains(web.getBounds()));
+
+        assertFalse(web.isSelected());
+        web.doClick();
+        assertTrue(peer.getSettings().platforms().contains("web"));
+    }
+
+    @Test
+    void libraryGeneratorIsASeparateEntryWithInteractivePlatforms() {
+        HuxerUILibraryProjectGenerator generator = new HuxerUILibraryProjectGenerator();
         assertEquals("HuxerUI", generator.getGroupName());
-        assertEquals("HuxerUI Module", generator.getName());
+        assertEquals("HuxerUI Library", generator.getName());
 
         HuxerUIDirectoryProjectGenerator.Peer peer =
                 (HuxerUIDirectoryProjectGenerator.Peer) generator.createPeer();
         JComponent component = peer.getComponent(new TextFieldWithBrowseButton(), () -> {});
-        assertNull(FindTextField(component, "huxerui.application_id"));
+        assertNotNull(FindTextField(component, "huxerui.application_id"));
 
         JBCheckBox linux = FindCheckBox(component, "huxerui.platform.linux");
         assertNotNull(linux);
-        assertTrue(peer.getSettings().platforms().contains("linux"));
+        assertTrue(peer.getSettings().platforms().isEmpty());
         linux.doClick();
-        assertFalse(peer.getSettings().platforms().contains("linux"));
+        assertEquals(List.of("linux"), peer.getSettings().platforms());
+        peer.sdk_.SetDiscovered(List.of(Sdk("first")), null);
+        assertNull(peer.validate());
+    }
+
+    @Test
+    void requiresAnSdkAndAutomaticallySelectsTheOnlyAvailableSdk() {
+        var peer = new HuxerUIDirectoryProjectGenerator.Peer(true);
+        assertNull(peer.getSettings().sdk());
+        assertNotNull(peer.validate());
+        var sdk = Sdk("first");
+        peer.sdk_.SetDiscovered(List.of(sdk), null);
+        assertEquals(sdk, peer.getSettings().sdk());
+        assertNull(peer.validate());
+    }
+
+    @Test
+    void waitsForAnExplicitChoiceAmongMultipleSdksAndKeepsItWhenDiscoveryChanges() {
+        var peer = new HuxerUIDirectoryProjectGenerator.Peer(false);
+        var first = Sdk("first");
+        var second = Sdk("second");
+        peer.sdk_.SetDiscovered(List.of(first, second), null);
+        assertNull(peer.getSettings().sdk());
+        assertNotNull(peer.validate());
+        var choices = (JComboBox<?>) peer.sdk_.getComponent(0);
+        choices.setSelectedItem(second);
+        peer.sdk_.SetDiscovered(List.of(first), null);
+        assertEquals(second, peer.getSettings().sdk());
+        assertNull(peer.validate());
+    }
+
+    @Test
+    void explainsWhyTheDetectedSdkCannotBeUsed() {
+        var peer = new HuxerUIDirectoryProjectGenerator.Peer(true);
+        String problem = "HuxerUI 0.4.0 found. Add SDK 0.5.0 or newer.";
+        peer.sdk_.SetDiscovered(List.of(), problem);
+        assertEquals(problem, peer.validate().message);
+        peer.sdk_.SetDiscovered(List.of(Sdk("current")), problem);
         assertNull(peer.validate());
     }
 
@@ -119,19 +178,25 @@ final class HuxerUIDirectoryProjectGeneratorTest {
     }
 
     @Test
-    void defaultProfilesMayHaveNullGenerationOptions() {
-        assertEquals("-DCMAKE_TOOLCHAIN_FILE=/emscripten.cmake",
-                HuxerUIDirectoryProjectGenerator.MergeGenerationOptions(
-                        null, "-DCMAKE_TOOLCHAIN_FILE=/emscripten.cmake"));
-        assertEquals("-DKEEP=ON -DWEB=ON",
-                HuxerUIDirectoryProjectGenerator.MergeGenerationOptions(" -DKEEP=ON ", " -DWEB=ON "));
-        assertEquals("", HuxerUIDirectoryProjectGenerator.MergeGenerationOptions(null, null));
+    void sdkSwitchUpdatesManagedOptionsAndPreservesCustomOptions(@TempDir Path temporary) throws Exception {
+        String existing = "-DKEEP=ON -DHUXERUI_HOME=/old -DCMAKE_TOOLCHAIN_FILE=/old-toolchain";
+        Path toolchain = CreateEmscriptenToolchain(temporary.resolve("with spaces"));
+        var plan = HuxerUIDirectoryProjectGenerator.PlanCMakeProfiles(List.of("web"), "linux", toolchain).getFirst();
+        String options = HuxerUIDirectoryProjectGenerator.SdkGenerationOptions(
+                existing, "/new sdk", plan.generation_options());
+        assertEquals(List.of("-DKEEP=ON", "-DHUXERUI_HOME=/new sdk", "-DCMAKE_TOOLCHAIN_FILE=" + toolchain),
+                ParametersListUtil.parse(options));
     }
 
     private static Path CreateEmscriptenToolchain(Path temporary) throws Exception {
         Path toolchain = temporary.resolve("cmake/Modules/Platform/Emscripten.cmake");
         Files.createDirectories(toolchain.getParent());
         return Files.createFile(toolchain);
+    }
+
+    private static HuxerUISdk Sdk(String name) {
+        Path home = Path.of(name);
+        return new HuxerUISdk(home, home.resolve("bin/huxerui"), "0.5.0");
     }
 
     private static JBCheckBox FindCheckBox(Container container, String name) {

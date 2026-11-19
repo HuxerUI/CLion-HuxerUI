@@ -25,7 +25,8 @@ public final class HuxerUIConfigurationType extends ConfigurationTypeBase {
 
             @Override
             public boolean isApplicable(@NotNull Project project) {
-                return org.huxerui.clion.project.HuxerUIProjectService.Get(project).IsProject();
+                var service = org.huxerui.clion.project.HuxerUIProjectService.Get(project);
+                return service.ApplicationRoot() != null || service.IsRunnableMcpp();
             }
 
             @Override

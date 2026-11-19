@@ -1,181 +1,178 @@
 package org.huxerui.clion.build;
 
-import com.intellij.build.BuildViewManager;
-import com.intellij.build.DefaultBuildDescriptor;
-import com.intellij.build.events.impl.FailureResultImpl;
-import com.intellij.build.events.impl.SuccessResultImpl;
-import com.intellij.build.progress.BuildProgress;
-import com.intellij.build.progress.BuildProgressDescriptor;
-import com.intellij.execution.configurations.GeneralCommandLine;
-import com.intellij.execution.process.KillableColoredProcessHandler;
-import com.intellij.execution.process.ProcessEvent;
-import com.intellij.execution.process.ProcessListener;
-import com.intellij.execution.process.ProcessOutputType;
 import com.intellij.icons.AllIcons;
+import com.intellij.ide.actions.RevealFileAction;
+import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.actionSystem.ActionGroup;
+import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DefaultActionGroup;
-import com.intellij.openapi.progress.ProgressIndicator;
-import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.DumbAware;
+import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
-import org.huxerui.clion.HuxerUINotifications;
+import com.intellij.openapi.ui.ComboBox;
+import com.intellij.openapi.ui.DialogWrapper;
+import com.intellij.openapi.ui.ValidationInfo;
+import com.intellij.ui.components.JBTextField;
+import com.intellij.util.ui.FormBuilder;
 import org.huxerui.clion.PlatformNames;
+import org.huxerui.clion.cli.HuxerUIBuildOptions;
 import org.huxerui.clion.cli.HuxerUICommand;
 import org.huxerui.clion.project.HuxerUIProjectService;
-import org.huxerui.clion.settings.HuxerUISettings;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.swing.JComponent;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
 public final class HuxerUIBuildActionGroup extends ActionGroup implements DumbAware {
     public HuxerUIBuildActionGroup() {
-        super("Build HuxerUI", true);
-        getTemplatePresentation().setDescription("Build HuxerUI artifacts for an enabled platform");
+        super("HuxerUI Build and Package", true);
+        getTemplatePresentation().setDescription("Build or package a HuxerUI application");
         getTemplatePresentation().setIcon(AllIcons.Actions.Compile);
     }
 
     @Override
+    public @NotNull ActionUpdateThread getActionUpdateThread() {
+        return ActionUpdateThread.BGT;
+    }
+
+    @Override
     public AnAction @NotNull [] getChildren(@Nullable AnActionEvent event) {
-        if (event == null || event.getProject() == null) {
+        Project project = event == null ? null : event.getProject();
+        if (project == null) {
             return AnAction.EMPTY_ARRAY;
         }
-        Project project = event.getProject();
-        List<String> platforms = HuxerUIProjectService.Get(project).EnabledPlatforms();
+        HuxerUIProjectService service = HuxerUIProjectService.Get(project);
+        if (service.IsMcppProject()) {
+            Path directory = HuxerUICommand.ProjectRoot(project);
+            return new AnAction[]{
+                    DumbAwareAction.create("Build Debug", ignored -> BuildMcpp(project, directory, "debug")),
+                    DumbAwareAction.create("Build Release", ignored -> BuildMcpp(project, directory, "release"))
+            };
+        }
+        Path root = service.ApplicationRoot();
+        if (root == null) {
+            return AnAction.EMPTY_ARRAY;
+        }
+        List<String> platforms = service.BuildablePlatforms();
         List<AnAction> actions = new ArrayList<>();
         if (platforms.size() > 1) {
-            DefaultActionGroup all = new DefaultActionGroup("Build All Enabled Platforms", true);
-            all.add(new BuildAction(project, String.join(",", platforms), "debug"));
-            all.add(new BuildAction(project, String.join(",", platforms), "release"));
+            String all_platforms = String.join(",", platforms);
+            DefaultActionGroup all = new DefaultActionGroup("All Available Platforms", true);
+            AddActions(all, project, root, all_platforms, false);
             actions.add(all);
         }
         for (String platform : platforms) {
-            DefaultActionGroup platform_group = new DefaultActionGroup(PlatformNames.DisplayName(platform), true);
-            platform_group.add(new BuildAction(project, platform, "debug"));
-            platform_group.add(new BuildAction(project, platform, "release"));
-            actions.add(platform_group);
+            DefaultActionGroup target = new DefaultActionGroup(PlatformNames.DisplayName(platform), true);
+            AddActions(target, project, root, platform, true);
+            actions.add(target);
+        }
+        Path dist = root.resolve("dist");
+        if (Files.isDirectory(dist) && RevealFileAction.isDirectoryOpenSupported()) {
+            actions.add(DumbAwareAction.create("Open Artifacts", ignored -> RevealFileAction.openDirectory(dist)));
         }
         return actions.toArray(AnAction[]::new);
+    }
+
+    private static void AddActions(DefaultActionGroup group, Project project, Path root, String platforms,
+            boolean advanced) {
+        group.add(DumbAwareAction.create("Build Debug",
+                ignored -> Run(project, root, platforms, "build", new HuxerUIBuildOptions("debug"))));
+        group.add(DumbAwareAction.create("Build Release",
+                ignored -> Run(project, root, platforms, "build", new HuxerUIBuildOptions("release"))));
+        group.add(DumbAwareAction.create("Package Release",
+                ignored -> Run(project, root, platforms, "package", new HuxerUIBuildOptions("release"))));
+        if (advanced) {
+            group.addSeparator();
+            group.add(DumbAwareAction.create("Build with Options...",
+                    ignored -> RunWithOptions(project, root, platforms, "build")));
+            group.add(DumbAwareAction.create("Package with Options...",
+                    ignored -> RunWithOptions(project, root, platforms, "package")));
+        }
     }
 
     @Override
     public void update(@NotNull AnActionEvent event) {
         Project project = event.getProject();
-        boolean visible = project != null && HuxerUIProjectService.Get(project).IsProject();
+        HuxerUIProjectService service = project == null ? null : HuxerUIProjectService.Get(project);
+        boolean mcpp = service != null && service.IsMcppProject();
+        boolean visible = mcpp || service != null && service.ApplicationRoot() != null;
         event.getPresentation().setVisible(visible);
-        var sdk_home = HuxerUISettings.getInstance().GetValidSdkHome();
-        event.getPresentation().setEnabled(
-                visible && sdk_home != null && HuxerUISettings.SdkLayout.FindCli(sdk_home) != null);
+        event.getPresentation().setEnabled(visible && TrustedProjects.isProjectTrusted(project)
+                && (mcpp || service.SdkCli() != null) && !service.HasActiveTask());
     }
 
-    private static final class BuildAction extends AnAction implements DumbAware {
-        private final Project project_;
-        private final String platforms_;
-        private final String profile_;
+    private static void BuildMcpp(Project project, Path root, String configuration) {
+        HuxerUIBuildTask.Queue(project, "Build HuxerUI mcpp (" + configuration + ")", root, () -> {
+            HuxerUICommand.RequireTrusted(project);
+            return HuxerUICommand.Mcpp(root, "build", configuration);
+        }, null);
+    }
 
-        private BuildAction(Project project, String platforms, String profile) {
-            super(profile.equals("debug") ? "Debug" : "Release");
-            project_ = project;
-            platforms_ = platforms;
-            profile_ = profile;
-        }
-
-        @Override
-        public void actionPerformed(@NotNull AnActionEvent event) {
-            String title = "Build HuxerUI " + platforms_ + " (" + profile_ + ")";
-            new Task.Backgroundable(project_, title, true) {
-                private Exception failure_;
-                private boolean canceled_;
-
-                @Override
-                public void run(@NotNull ProgressIndicator indicator) {
-                    indicator.setIndeterminate(true);
-                    indicator.setText(title);
-                    long start_time = System.currentTimeMillis();
-                    DefaultBuildDescriptor descriptor = new DefaultBuildDescriptor(
-                            new Object(), title, HuxerUICommand.ProjectRoot(project_).toString(), start_time);
-                    descriptor.setActivateToolWindowWhenAdded(true);
-                    descriptor.setActivateToolWindowWhenFailed(true);
-                    BuildProgress<BuildProgressDescriptor> build = BuildViewManager.createBuildProgress(project_);
-                    build.start(new HuxerUIBuildProgressDescriptor(title, descriptor));
-                    try {
-                        GeneralCommandLine command = HuxerUICommand.Create(
-                                HuxerUICommand.ProjectRoot(project_),
-                                List.of("build", platforms_, "--profile", profile_)
-                        );
-                        build.output("> " + command.getCommandLineString() + "\n", ProcessOutputType.SYSTEM);
-                        KillableColoredProcessHandler process = new KillableColoredProcessHandler(command);
-                        process.addProcessListener(new ProcessListener() {
-                            @Override
-                            public void onTextAvailable(
-                                    @NotNull ProcessEvent event,
-                                    @NotNull com.intellij.openapi.util.Key output_type
-                            ) {
-                                ProcessOutputType type = ProcessOutputType.fromKey(output_type);
-                                build.output(event.getText(), type == null ? ProcessOutputType.SYSTEM : type);
-                            }
-                        });
-                        process.startNotify();
-                        while (!process.waitFor(100)) {
-                            if (indicator.isCanceled()) {
-                                canceled_ = true;
-                                process.destroyProcess();
-                                process.waitFor();
-                                build.cancel(System.currentTimeMillis(), "Build canceled");
-                                return;
-                            }
-                        }
-                        Integer exit_code = process.getExitCode();
-                        if (exit_code == null || exit_code != 0) {
-                            String message = "HuxerUI build exited with code "
-                                    + (exit_code == null ? "unknown" : exit_code);
-                            failure_ = new IllegalStateException(message);
-                            build.finish(System.currentTimeMillis(), "Build failed", new FailureResultImpl(message));
-                        } else {
-                            build.finish(System.currentTimeMillis(), "Build successful", new SuccessResultImpl());
-                        }
-                    } catch (Exception error) {
-                        failure_ = error;
-                        String message = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
-                        build.output(message + "\n", ProcessOutputType.STDERR);
-                        build.finish(System.currentTimeMillis(), "Build failed", new FailureResultImpl(message, error));
-                    }
-                }
-
-                @Override
-                public void onSuccess() {
-                    if (canceled_) {
-                        return;
-                    }
-                    if (failure_ != null) {
-                        HuxerUINotifications.error(project_, "HuxerUI build failed", failure_.getMessage());
-                    } else {
-                        HuxerUINotifications.info(
-                                project_,
-                                "HuxerUI build completed",
-                                platforms_ + " (" + profile_ + ")"
-                        );
-                    }
-                }
-            }.queue();
+    private static void RunWithOptions(Project project, Path root, String platform, String operation) {
+        OptionsDialog dialog = new OptionsDialog(project, platform, operation);
+        if (dialog.showAndGet()) {
+            Run(project, root, platform, operation, dialog.Options());
         }
     }
 
-    private record HuxerUIBuildProgressDescriptor(
-            String title,
-            DefaultBuildDescriptor descriptor
-    ) implements BuildProgressDescriptor {
-        @Override
-        public String getTitle() {
-            return title;
+    private static void Run(Project project, Path root, String platforms, String operation,
+            HuxerUIBuildOptions options) {
+        String title = (operation.equals("package") ? "Package HuxerUI " : "Build HuxerUI ")
+                + platforms + " (" + options.configuration() + ")";
+        HuxerUIBuildTask.Queue(project, title, root,
+                () -> HuxerUICommand.Create(project, root, options.Arguments(operation, platforms)), null);
+    }
+
+    private static final class OptionsDialog extends DialogWrapper {
+        private final ComboBox<String> configuration_ = new ComboBox<>(new String[]{"debug", "release"});
+        private final JBTextField abis_ = new JBTextField(24);
+        private final ComboBox<String> optimization_ = new ComboBox<>(new String[]{"", "default", "size", "minsize"});
+        private final ComboBox<String> lto_ = new ComboBox<>(new String[]{"", "on", "off"});
+        private final String platform_;
+        private final String operation_;
+
+        private OptionsDialog(Project project, String platform, String operation) {
+            super(project);
+            platform_ = platform;
+            operation_ = operation;
+            boolean packaging = operation.equals("package");
+            setTitle((packaging ? "Package HuxerUI for " : "Build HuxerUI for ") + PlatformNames.DisplayName(platform));
+            setOKButtonText(packaging ? "Package" : "Build");
+            configuration_.setSelectedItem(packaging ? "release" : "debug");
+            abis_.getEmptyText().setText("SDK default");
+            init();
         }
 
         @Override
-        public DefaultBuildDescriptor getBuildDescriptor() {
-            return descriptor;
+        protected JComponent createCenterPanel() {
+            return FormBuilder.createFormBuilder()
+                    .addLabeledComponent("Configuration", configuration_)
+                    .addLabeledComponent("ABIs", abis_)
+                    .addTooltip("Comma-separated. Available ABIs: " + String.join(", ", HuxerUIBuildOptions.Abis(platform_)))
+                    .addLabeledComponent("Optimization", optimization_)
+                    .addLabeledComponent("LTO", lto_)
+                    .getPanel();
+        }
+
+        @Override
+        protected @Nullable ValidationInfo doValidate() {
+            try {
+                Options().Arguments(operation_, platform_);
+                return null;
+            } catch (IllegalArgumentException error) {
+                return new ValidationInfo(error.getMessage(), abis_);
+            }
+        }
+
+        private HuxerUIBuildOptions Options() {
+            return new HuxerUIBuildOptions(configuration_.getItem(), abis_.getText().strip(), optimization_.getItem(),
+                    lto_.getItem());
         }
     }
 }

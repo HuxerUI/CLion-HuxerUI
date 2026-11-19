@@ -11,10 +11,10 @@
         <applicationService serviceImplementation="org.huxerui.clion.settings.HuxerUISettings"/>
         <projectService serviceImplementation="org.huxerui.clion.project.HuxerUIProjectService"/>
         <directoryProjectGenerator implementation="org.huxerui.clion.project.HuxerUIAppProjectGenerator"/>
-        <directoryProjectGenerator implementation="org.huxerui.clion.project.HuxerUIModuleProjectGenerator"/>
+        <directoryProjectGenerator implementation="org.huxerui.clion.project.HuxerUILibraryProjectGenerator"/>
         <applicationConfigurable
                 id="org.huxerui.clion.settings"
-                parentId="tools"
+                parentId="build"
                 displayName="HuxerUI"
                 instance="org.huxerui.clion.settings.HuxerUIConfigurable"/>
         <gotoDeclarationHandler
@@ -36,10 +36,24 @@
                 description="Download and install the latest HuxerUI SDK from GitHub Releases"/>
         <group id="HuxerUI.Tools" text="HuxerUI" popup="true">
             <reference ref="HuxerUI.InstallSdk"/>
+            <group id="HuxerUI.SDKs" class="org.huxerui.clion.sdk.HuxerUISdkActionGroup" text="SDK"/>
+            <group id="HuxerUI.Toolchain" class="org.huxerui.clion.cli.HuxerUIToolchainActions" text="Toolchain"/>
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </group>
+        <group id="HuxerUI.DeviceSelector" class="org.huxerui.clion.run.DeviceSelectorAction"
+                text="HuxerUI Run Target" description="Select a HuxerUI platform or device" popup="true">
+            <add-to-group group-id="RunToolbarMainActionGroup" anchor="before"
+                          relative-to-action="RunToolbarTopLevelExecutorActionGroup"/>
+            <add-to-group group-id="ToolbarRunGroup" anchor="before" relative-to-action="RunnerActions"/>
+            <add-to-group group-id="RunMenu" anchor="last"/>
+        </group>
+        <action id="HuxerUI.RunWithWatch"
+                class="org.huxerui.clion.run.RunWithWatchAction"
+                text="HuxerUI Run with Watch" description="Rebuild and relaunch after source changes">
+            <add-to-group group-id="RunMenu" anchor="last"/>
+        </action>
         <group id="HuxerUI.Build" class="org.huxerui.clion.build.HuxerUIBuildActionGroup"
-                text="HuxerUI" popup="true">
+                text="HuxerUI Build and Package" popup="true">
             <add-to-group group-id="BuildMenu" anchor="last"/>
             <add-to-group group-id="RunToolbarMainActionGroup" anchor="after"
                     relative-to-action="RunToolbarTopLevelExecutorActionGroup"/>

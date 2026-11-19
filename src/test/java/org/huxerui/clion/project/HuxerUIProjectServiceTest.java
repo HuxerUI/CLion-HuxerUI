@@ -20,32 +20,44 @@ final class HuxerUIProjectServiceTest {
     }
 
     @Test
-    void recognizesModulesAndResolvesTheirPreviewApplication(@TempDir Path root) throws Exception {
-        WriteCMake(root, "HUXERUI_ADD_MODULE(camera SOURCES src/camera.cpp)\n");
+    void recognizesLibrariesAndResolvesTheirPreviewApplication(@TempDir Path root) throws Exception {
+        WriteCMake(root, "HUXERUI_ADD_LIBRARY(camera SOURCES src/camera.cpp)\n");
         Path preview = root.resolve("examples/preview");
         WriteCMake(preview, "huxerui_add_app(camera_preview SOURCES src/preview.cpp)\n");
 
-        assertEquals(HuxerUIProjectService.ProjectKind.MODULE, HuxerUIProjectService.FindProjectKind(root));
+        assertEquals(HuxerUIProjectService.ProjectKind.LIBRARY, HuxerUIProjectService.FindProjectKind(root));
         assertEquals(preview, HuxerUIProjectService.FindApplicationRoot(root));
         assertEquals(root, HuxerUIProjectService.FindResourceRoot(root, root.resolve("src/camera.cpp")));
         assertEquals(preview, HuxerUIProjectService.FindResourceRoot(root, preview.resolve("src/preview.cpp")));
     }
 
     @Test
-    void recognizesModulesEvenBeforeTheyHaveAPreviewShell(@TempDir Path root) throws Exception {
-        WriteCMake(root, "huxerui_add_module(camera)\n");
+    void recognizesLibrariesEvenBeforeTheyHaveAPreviewShell(@TempDir Path root) throws Exception {
+        WriteCMake(root, "huxerui_add_library(camera)\n");
 
-        assertEquals(HuxerUIProjectService.ProjectKind.MODULE, HuxerUIProjectService.FindProjectKind(root));
+        assertEquals(HuxerUIProjectService.ProjectKind.LIBRARY, HuxerUIProjectService.FindProjectKind(root));
         assertNull(HuxerUIProjectService.FindApplicationRoot(root));
+    }
+
+    @Test
+    void recognizesMcppSourceDependencies(@TempDir Path root) throws Exception {
+        Path mcpp = Files.createDirectory(root.resolve("mcpp"));
+        Files.writeString(mcpp.resolve("mcpp.toml"), """
+                [dependencies]
+                huxerui = { path = "/source/HuxerUI" }
+                [targets.camera]
+                kind = "bin"
+                """);
+        assertTrue(HuxerUIProjectService.McppManifest(mcpp).contains("huxerui ="));
     }
 
     @Test
     void ignoresCommandNamesInCommentsAndCMakeStrings(@TempDir Path root) throws Exception {
         WriteCMake(root, """
                 # huxerui_add_app(commented)
-                set(TEXT "huxerui_add_module(quoted)")
+                set(TEXT "huxerui_add_library(quoted)")
                 #[=[ huxerui_add_app(bracket_comment) ]=]
-                set(BRACKET [=[huxerui_add_module(bracket_argument)]=])
+                set(BRACKET [=[huxerui_add_library(bracket_argument)]=])
                 """);
 
         assertEquals(HuxerUIProjectService.ProjectKind.NONE, HuxerUIProjectService.FindProjectKind(root));

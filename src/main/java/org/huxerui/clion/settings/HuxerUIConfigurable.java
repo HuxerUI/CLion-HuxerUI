@@ -26,7 +26,8 @@ public final class HuxerUIConfigurable implements Configurable {
         sdk_home_ = new TextFieldWithBrowseButton();
         sdk_home_.addBrowseFolderListener(null, FileChooserDescriptorFactory.createSingleFolderDescriptor());
         panel_ = FormBuilder.createFormBuilder()
-                .addLabeledComponent(new JBLabel("HUXERUI_HOME:"), sdk_home_, 1, false)
+                .addLabeledComponent(new JBLabel("Default SDK:"), sdk_home_, 1, false)
+                .addTooltip("Used only by projects without a project-specific SDK.")
                 .addComponentFillVertically(new JPanel(), 0)
                 .getPanel();
         reset();

@@ -2,66 +2,129 @@ package org.huxerui.clion.run;
 
 import com.intellij.execution.RunManager;
 import com.intellij.execution.RunnerAndConfigurationSettings;
+import com.intellij.ide.trustedProjects.TrustedProjects;
+import com.intellij.openapi.actionSystem.ActionGroup;
+import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
-import com.intellij.openapi.actionSystem.DataContext;
-import com.intellij.openapi.actionSystem.DefaultActionGroup;
-import com.intellij.openapi.actionSystem.ex.ComboBoxAction;
+import com.intellij.openapi.actionSystem.Separator;
+import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.DumbAware;
+import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.text.StringUtil;
 import org.huxerui.clion.HuxerUINotifications;
 import org.huxerui.clion.PlatformNames;
 import org.huxerui.clion.project.HuxerUIProjectService;
-import org.huxerui.clion.settings.HuxerUISettings;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import javax.swing.JComponent;
+import java.util.ArrayList;
 import java.util.List;
 
-public final class DeviceSelectorAction extends ComboBoxAction implements DumbAware {
+public final class DeviceSelectorAction extends ActionGroup implements DumbAware {
+    public DeviceSelectorAction() {
+        super("HuxerUI Run Target", true);
+        getTemplatePresentation().putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true);
+    }
+
+    @Override
+    public @NotNull ActionUpdateThread getActionUpdateThread() {
+        return ActionUpdateThread.BGT;
+    }
+
     @Override
     public void update(@NotNull AnActionEvent event) {
         Project project = event.getProject();
-        boolean visible = project != null && HuxerUIProjectService.Get(project).IsProject();
+        HuxerUIProjectService service = project == null ? null : HuxerUIProjectService.Get(project);
+        boolean visible = service != null && service.ApplicationRoot() != null;
         event.getPresentation().setVisible(visible);
-        event.getPresentation().setEnabled(visible && HuxerUISettings.getInstance().HasValidSdk());
-        if (visible) {
-            HuxerUIProjectService service = HuxerUIProjectService.Get(project);
-            service.EnsureDevicesLoaded();
-            HuxerUIDevice selected = service.SelectedDevice();
-            event.getPresentation().setText(selected.platform().isBlank() ? "Select Device" : selected.DisplayName());
+        event.getPresentation().setEnabled(visible && TrustedProjects.isProjectTrusted(project)
+                && service.SdkHome() != null);
+        if (event.isFromActionToolbar()) {
+            var presentation = event.getPresentation();
+            HuxerUIDevice target = visible ? ActiveDevice(project, service.Devices()) : null;
+            if (target == null) {
+                presentation.setText("Run Target");
+                presentation.setDescription(getTemplatePresentation().getDescription());
+            } else {
+                String name = IsMobile(target.platform()) && !target.name().isBlank()
+                        ? target.name() : PlatformNames.DisplayName(target.platform());
+                presentation.setText(StringUtil.shortenTextWithEllipsis(name, 24, 0), false);
+                presentation.setDescription(target.DisplayName());
+            }
         }
     }
 
     @Override
-    protected @NotNull DefaultActionGroup createPopupActionGroup(
-            @NotNull JComponent button,
-            @NotNull DataContext data_context
-    ) {
-        DefaultActionGroup group = new DefaultActionGroup();
-        Project project = com.intellij.openapi.actionSystem.CommonDataKeys.PROJECT.getData(data_context);
+    public AnAction @NotNull [] getChildren(@Nullable AnActionEvent event) {
+        Project project = event == null ? null : event.getProject();
         if (project == null) {
-            return group;
+            return AnAction.EMPTY_ARRAY;
         }
         HuxerUIProjectService service = HuxerUIProjectService.Get(project);
-        for (HuxerUIDevice device : service.Devices()) {
-            group.add(new SelectDeviceAction(project, device));
+        if (event.isFromMainMenu() || event.isFromContextMenu()) {
+            service.EnsureDevicesLoaded();
         }
-        if (!service.Devices().isEmpty()) {
-            group.addSeparator();
+        List<HuxerUIDevice> devices = service.Devices();
+        List<AnAction> actions = new ArrayList<>();
+        for (HuxerUIDevice device : devices) {
+            if (!IsMobile(device.platform())) {
+                actions.add(new SelectDeviceAction(project, device, device.DisplayName()));
+            }
         }
-        group.add(new RefreshDevicesAction(project));
-        return group;
+        for (String platform : service.BuildablePlatforms()) {
+            if (!IsMobile(platform)) {
+                continue;
+            }
+            actions.add(Separator.create(PlatformNames.DisplayName(platform)));
+            List<HuxerUIDevice> mobile_devices = devices.stream()
+                    .filter(device -> device.platform().equals(platform)).toList();
+            if (mobile_devices.isEmpty()) {
+                actions.add(new SelectDeviceAction(project,
+                        new HuxerUIDevice(platform, "", "", ""), "No devices found"));
+            }
+            for (HuxerUIDevice device : mobile_devices) {
+                actions.add(new SelectDeviceAction(project, device, device.name().isBlank() ? device.id() : device.name()));
+            }
+        }
+        actions.add(Separator.create());
+        actions.add(new RefreshDevicesAction(project));
+        return actions.toArray(AnAction[]::new);
     }
 
-    private static final class SelectDeviceAction extends AnAction implements DumbAware {
+    private static boolean IsMobile(String platform) {
+        return platform.equals("android") || platform.equals("ios");
+    }
+
+    static HuxerUIDevice ActiveDevice(Project project, List<HuxerUIDevice> devices) {
+        var selected = RunManager.getInstance(project).getSelectedConfiguration();
+        if (selected == null) {
+            return null;
+        }
+        if (selected.getConfiguration() instanceof HuxerUIRunConfiguration configuration) {
+            return devices.stream().filter(device -> device.platform().equals(configuration.GetPlatform())
+                            && device.id().equals(configuration.GetDeviceId()))
+                    .findFirst().orElseGet(() -> configuration.GetPlatform().isBlank() ? null :
+                            new HuxerUIDevice(configuration.GetPlatform(), configuration.GetDeviceId(), "", ""));
+        }
+        return devices.stream().filter(device -> device.id().equals("local")
+                        && selected.getName().equals(ConfigurationName(device)))
+                .findFirst().orElse(null);
+    }
+
+    private static final class SelectDeviceAction extends DumbAwareAction {
         private final Project project_;
         private final HuxerUIDevice device_;
 
-        private SelectDeviceAction(Project project, HuxerUIDevice device) {
-            super(device.DisplayName() + (device.IsReady() ? "" : " [" + device.state() + "]"));
+        private SelectDeviceAction(Project project, HuxerUIDevice device, String text) {
+            super(text + (device.IsReady() || device.state().isEmpty()
+                    ? "" : " [" + device.state() + "]"));
+            if (IsMobile(device.platform())) {
+                getTemplatePresentation().setDescription(device.id());
+            }
             project_ = project;
             device_ = device;
         }
@@ -71,7 +134,6 @@ public final class DeviceSelectorAction extends ComboBoxAction implements DumbAw
             if (!device_.IsReady()) {
                 return;
             }
-            HuxerUIProjectService.Get(project_).SelectDevice(device_);
             SelectRunConfiguration(project_, device_);
         }
 
@@ -81,7 +143,7 @@ public final class DeviceSelectorAction extends ComboBoxAction implements DumbAw
         }
     }
 
-    private static final class RefreshDevicesAction extends AnAction implements DumbAware {
+    private static final class RefreshDevicesAction extends DumbAwareAction {
         private final Project project_;
 
         private RefreshDevicesAction(Project project) {
@@ -125,27 +187,29 @@ public final class DeviceSelectorAction extends ComboBoxAction implements DumbAw
         RunManager manager = RunManager.getInstance(project);
         HuxerUIProjectService service = HuxerUIProjectService.Get(project);
         HuxerUIDevice selected = service.SelectedDevice();
-        RunnerAndConfigurationSettings selected_settings = null;
+        RunnerAndConfigurationSettings current = manager.getSelectedConfiguration();
+        RunnerAndConfigurationSettings preferred = null;
+        HuxerUIDevice preferred_device = null;
         List<HuxerUIDevice> ready = devices.stream().filter(HuxerUIDevice::IsReady).toList();
         for (HuxerUIDevice device : ready) {
             RunnerAndConfigurationSettings settings = EnsureRunConfiguration(manager, project, device);
-            if (SameTarget(device, selected)) {
-                selected_settings = settings;
+            if (SameTarget(device, selected)
+                    || (selected.platform().isEmpty() && (device.id().equals("local") || ready.size() == 1))) {
+                preferred = settings;
+                preferred_device = device;
             }
         }
-        if (selected_settings == null && ready.size() == 1) {
-            HuxerUIDevice device = ready.get(0);
-            service.SelectDevice(device);
-            selected_settings = EnsureRunConfiguration(manager, project, device);
-        }
-        if (selected_settings != null) {
-            manager.setSelectedConfiguration(selected_settings);
+        if (preferred != null && (current == null
+                || (selected.platform().isEmpty() && current.getConfiguration()
+                        instanceof com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration))) {
+            manager.setSelectedConfiguration(preferred);
+            service.SelectDevice(preferred_device);
         }
     }
 
     static String ConfigurationName(HuxerUIDevice device) {
         String platform = PlatformNames.DisplayName(device.platform());
-        return device.platform().equals("android") || device.platform().equals("ios")
+        return IsMobile(device.platform())
                 ? "HuxerUI " + platform + " — " + (device.name().isBlank() ? device.id() : device.name())
                 : "HuxerUI " + platform;
     }
@@ -157,34 +221,30 @@ public final class DeviceSelectorAction extends ComboBoxAction implements DumbAw
     ) {
         RunnerAndConfigurationSettings cmake = HuxerUICMakeRunConfiguration.Ensure(manager, project, device);
         if (cmake != null) {
-            for (RunnerAndConfigurationSettings item : List.copyOf(manager.getAllSettings())) {
-                if (item.getConfiguration() instanceof HuxerUIRunConfiguration configuration
-                        && configuration.GetPlatform().equals(device.platform())
-                        && configuration.GetDeviceId().equals(device.id())) {
-                    manager.removeConfiguration(item);
-                }
-            }
             return cmake;
         }
-        RunnerAndConfigurationSettings settings = manager.getAllSettings().stream()
+        return manager.getAllSettings().stream()
                 .filter(item -> item.getConfiguration() instanceof HuxerUIRunConfiguration configuration
                         && configuration.GetPlatform().equals(device.platform())
-                        && configuration.GetDeviceId().equals(device.id()))
+                        && configuration.GetDeviceId().equals(device.id())
+                        && !configuration.IsWatch())
                 .findFirst()
                 .orElseGet(() -> {
-                    RunnerAndConfigurationSettings created = manager.createConfiguration(
+                    String name = manager.suggestUniqueName(
                             ConfigurationName(device),
+                            com.intellij.execution.configurations.ConfigurationTypeUtil
+                                    .findConfigurationType(HuxerUIConfigurationType.class));
+                    RunnerAndConfigurationSettings created = manager.createConfiguration(
+                            name,
                             HuxerUIConfigurationType.class
                     );
+                    HuxerUIRunConfiguration configuration = (HuxerUIRunConfiguration) created.getConfiguration();
+                    configuration.SetPlatform(device.platform());
+                    configuration.SetDeviceId(device.id());
+                    configuration.SetProfile(HuxerUIProjectService.Get(project).Profile());
                     manager.addConfiguration(created);
                     return created;
                 });
-        settings.setName(ConfigurationName(device));
-        HuxerUIRunConfiguration configuration = (HuxerUIRunConfiguration) settings.getConfiguration();
-        configuration.SetPlatform(device.platform());
-        configuration.SetDeviceId(device.id());
-        configuration.SetProfile(HuxerUIProjectService.Get(project).Profile());
-        return settings;
     }
 
     private static boolean SameTarget(HuxerUIDevice left, HuxerUIDevice right) {

@@ -20,7 +20,7 @@ final class HuxerUINewProjectWizardTest {
             assertTrue(plugin_xml.contains(
                     "implementation=\"org.huxerui.clion.project.HuxerUIAppProjectGenerator\""));
             assertTrue(plugin_xml.contains(
-                    "implementation=\"org.huxerui.clion.project.HuxerUIModuleProjectGenerator\""));
+                    "implementation=\"org.huxerui.clion.project.HuxerUILibraryProjectGenerator\""));
             assertFalse(plugin_xml.contains("<newProjectWizard.generator"));
         }
     }

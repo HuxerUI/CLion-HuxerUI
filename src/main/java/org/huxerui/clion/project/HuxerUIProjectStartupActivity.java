@@ -3,37 +3,72 @@ package org.huxerui.clion.project;
 import com.intellij.notification.NotificationAction;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
+import com.intellij.ide.trustedProjects.TrustedProjects;
+import com.intellij.ide.trustedProjects.TrustedProjectsListener;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.options.ShowSettingsUtil;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.startup.StartupActivity;
+import com.jetbrains.cidr.cpp.cmake.CMakeSettings;
 import org.huxerui.clion.HuxerUINotifications;
 import org.huxerui.clion.run.DeviceSelectorAction;
 import org.huxerui.clion.run.HuxerUIDevice;
+import org.huxerui.clion.sdk.HuxerUISdkActionGroup;
 import org.huxerui.clion.sdk.InstallSdkAction;
-import org.huxerui.clion.settings.HuxerUIConfigurable;
-import org.huxerui.clion.settings.HuxerUISettings;
 import org.jetbrains.annotations.NotNull;
 
+import java.nio.file.Path;
 import java.util.List;
 
 public final class HuxerUIProjectStartupActivity implements StartupActivity {
     @Override
     public void runActivity(@NotNull Project project) {
+        if (!TrustedProjects.isProjectTrusted(project)) {
+            var connection = ApplicationManager.getApplication().getMessageBus().connect(project);
+            connection.subscribe(TrustedProjectsListener.TOPIC, new TrustedProjectsListener() {
+                @Override
+                public void onProjectTrusted(@NotNull Project trusted) {
+                    if (project == trusted) {
+                        connection.disconnect();
+                        Start(project);
+                    }
+                }
+            });
+            return;
+        }
+        Start(project);
+    }
+
+    private static void Start(Project project) {
+        HuxerUIProjectService service = HuxerUIProjectService.Get(project);
+        Path sdk = service.ApplicationRoot() == null ? null : service.SdkHome();
+        if (sdk != null
+                && CMakeSettings.getInstance(project).getProfiles().stream().noneMatch(profile ->
+                        sdk.toString().equals(profile.getAdditionalEnvironment().get("HUXERUI_HOME")))) {
+            ConfigureAfterSdkAvailable(project);
+            return;
+        }
         Activate(project);
     }
 
     public static void Activate(Project project) {
-        if (project.isDisposed()) {
+        if (project.isDisposed() || !TrustedProjects.isProjectTrusted(project)) {
             return;
         }
         HuxerUIProjectService service = HuxerUIProjectService.Get(project);
         if (!service.IsProject()) {
             return;
         }
-        if (!HuxerUISettings.getInstance().HasValidSdk()) {
+        if (service.IsMcppProject()) {
+            ApplicationManager.getApplication().invokeLater(() -> {
+                if (!project.isDisposed()) {
+                    DeviceSelectorAction.SyncRunConfigurations(project, service.Devices());
+                }
+            });
+            return;
+        }
+        if (service.SdkHome() == null) {
             PromptForSdk(project, service);
             return;
         }
@@ -59,16 +94,14 @@ public final class HuxerUIProjectStartupActivity implements StartupActivity {
                 NotificationType.WARNING);
         notification.addAction(NotificationAction.createSimpleExpiring(
                 "Install SDK", () -> InstallSdkAction.Install(project, () -> ConfigureAfterSdkAvailable(project))));
-        notification.addAction(NotificationAction.createSimpleExpiring("Configure SDK", () -> {
-            ShowSettingsUtil.getInstance().showSettingsDialog(project, HuxerUIConfigurable.class);
-            if (HuxerUISettings.getInstance().HasValidSdk()) {
-                ConfigureAfterSdkAvailable(project);
-            }
-        }));
+        notification.addAction(NotificationAction.createSimple("Select SDK", () -> HuxerUISdkActionGroup.SelectSdk(project)));
         notification.notify(project);
     }
 
-    private static void ConfigureAfterSdkAvailable(Project project) {
+    public static void ConfigureAfterSdkAvailable(Project project) {
+        if (project.isDisposed() || !TrustedProjects.isProjectTrusted(project)) {
+            return;
+        }
         new Task.Backgroundable(project, "Configure HuxerUI Project", false) {
             private Exception failure_;
 
@@ -77,7 +110,9 @@ public final class HuxerUIProjectStartupActivity implements StartupActivity {
                 indicator.setIndeterminate(true);
                 indicator.setText("Configuring HuxerUI CMake profiles");
                 try {
-                    HuxerUIDirectoryProjectGenerator.ConfigureRecognizedProject(project);
+                    HuxerUIDirectoryProjectGenerator.ConfigureRecognizedProject(project, false);
+                } catch (com.intellij.openapi.progress.ProcessCanceledException error) {
+                    throw error;
                 } catch (Exception error) {
                     failure_ = error;
                 }

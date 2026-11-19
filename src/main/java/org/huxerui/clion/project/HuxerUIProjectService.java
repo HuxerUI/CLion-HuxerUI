@@ -5,13 +5,16 @@ import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
+import com.intellij.openapi.components.StoragePathMacros;
 import com.intellij.openapi.project.Project;
 import com.intellij.util.xmlb.XmlSerializerUtil;
 import org.huxerui.clion.cli.HuxerUICommand;
 import org.huxerui.clion.run.DeviceOutputParser;
+import org.huxerui.clion.run.AndroidDeviceAbis;
 import org.huxerui.clion.run.DeviceSelectorAction;
 import org.huxerui.clion.run.HuxerUIDevice;
 import org.huxerui.clion.settings.HuxerUISettings;
+import org.huxerui.clion.settings.HuxerUISettings.SdkLayout;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -20,27 +23,39 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 @Service(Service.Level.PROJECT)
-@State(name = "HuxerUIProject", storages = @Storage("huxerui.xml"))
+@State(name = "HuxerUIProject", storages = {
+        @Storage(StoragePathMacros.WORKSPACE_FILE),
+        @Storage(value = "huxerui.xml", deprecated = true)
+})
 public final class HuxerUIProjectService implements PersistentStateComponent<HuxerUIProjectService.StateData> {
     public static final List<String> all_platforms = List.of("android", "ios", "windows", "macos", "linux", "web");
+    private static final Pattern mcpp_runner =
+            Pattern.compile("(?m)^\\s*(?:kind|type)\\s*=\\s*[\"'](?:app|bin|exe)[\"']");
+    private static final Pattern mcpp_dependency =
+            Pattern.compile("(?m)^\\s*[\"']?(?:huxerui\\.huxerui|huxerui)[\"']?\\s*=");
 
-    enum ProjectKind { NONE, APPLICATION, MODULE }
+    enum ProjectKind { NONE, APPLICATION, LIBRARY }
 
     public static final class StateData {
         public String platform = "";
         public String device_id = "";
         public String device_name = "";
         public String profile = "debug";
+        public String sdk_home = "";
     }
 
     private final Project project_;
     private StateData state_ = new StateData();
     private volatile List<HuxerUIDevice> devices_ = List.of();
+    private volatile Path discovered_sdk_;
     private final AtomicBoolean refresh_scheduled_ = new AtomicBoolean();
     private final AtomicBoolean sdk_prompt_shown_ = new AtomicBoolean();
+    private final AtomicBoolean task_active_ = new AtomicBoolean();
 
     public HuxerUIProjectService(Project project) {
         project_ = project;
@@ -61,12 +76,82 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
     }
 
     public boolean IsProject() {
+        return IsCMakeProject() || IsMcppProject();
+    }
+
+    public boolean IsCMakeProject() {
         String base_path = project_.getBasePath();
         return base_path != null && FindProjectKind(Path.of(base_path)) != ProjectKind.NONE;
     }
 
+    public boolean IsMcppProject() {
+        String base_path = project_.getBasePath();
+        return base_path != null && !IsCMakeProject() && !McppManifest(Path.of(base_path)).isEmpty();
+    }
+
+    public boolean IsRunnableMcpp() {
+        String base_path = project_.getBasePath();
+        return base_path != null && !IsCMakeProject() && mcpp_runner.matcher(McppManifest(Path.of(base_path))).find();
+    }
+
+    static String McppManifest(Path root) {
+        try {
+            Path manifest = root.resolve("mcpp.toml");
+            if (!Files.isRegularFile(manifest) || SdkLayout.IsSource(root)) {
+                return "";
+            }
+            String content = Files.readString(manifest);
+            if (mcpp_dependency.matcher(content).find()) {
+                return content;
+            }
+            Path rules = root.resolve("build.mcpp");
+            return Files.isRegularFile(rules) && Files.readString(rules).contains("import huxerui.rules")
+                    ? content : "";
+        } catch (IOException ignored) {
+            return "";
+        }
+    }
+
+    public @Nullable Path ApplicationRoot() {
+        String base_path = project_.getBasePath();
+        return base_path == null ? null : FindApplicationRoot(Path.of(base_path));
+    }
+
+    public @Nullable Path SdkHome() {
+        return state_.sdk_home.isBlank()
+                ? HuxerUISettings.getInstance().ResolveSdkHome(project_.getBasePath())
+                : SdkLayout.ValidHome(state_.sdk_home);
+    }
+
+    public String SdkOverride() {
+        return state_.sdk_home;
+    }
+
+    public void SetSdkOverride(String home) {
+        state_.sdk_home = home;
+        devices_ = List.of();
+        discovered_sdk_ = null;
+    }
+
+    public @Nullable Path SdkCli() {
+        Path home = SdkHome();
+        return home == null ? null : SdkLayout.FindCli(home);
+    }
+
+    public boolean HasActiveTask() {
+        return task_active_.get();
+    }
+
+    public boolean TryStartTask() {
+        return task_active_.compareAndSet(false, true);
+    }
+
+    public void FinishTask() {
+        task_active_.set(false);
+    }
+
     public List<String> EnabledPlatforms() {
-        Path root = FindApplicationRoot(HuxerUICommand.ProjectRoot(project_));
+        Path root = ApplicationRoot();
         if (root == null) {
             return List.of();
         }
@@ -80,13 +165,20 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
         return result;
     }
 
+    public List<String> BuildablePlatforms() {
+        String host = HostPlatformId();
+        return EnabledPlatforms().stream().filter(platform ->
+                platform.equals(host) || platform.equals("android") || platform.equals("web")
+                        || (host.equals("macos") && platform.equals("ios"))).toList();
+    }
+
     public static @Nullable Path FindApplicationRoot(Path project_root) {
         ProjectKind root_kind = FindProjectKind(project_root);
         if (root_kind == ProjectKind.APPLICATION) {
             return project_root;
         }
         Path preview = project_root.resolve("examples/preview");
-        return root_kind == ProjectKind.MODULE && FindProjectKind(preview) == ProjectKind.APPLICATION ? preview : null;
+        return root_kind == ProjectKind.LIBRARY && FindProjectKind(preview) == ProjectKind.APPLICATION ? preview : null;
     }
 
     public static @Nullable Path FindResourceRoot(Path project_root, @Nullable Path source_file) {
@@ -94,7 +186,7 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
         if (root_kind == ProjectKind.APPLICATION) {
             return project_root;
         }
-        if (root_kind != ProjectKind.MODULE) {
+        if (root_kind != ProjectKind.LIBRARY) {
             return null;
         }
         Path preview = project_root.resolve("examples/preview").normalize();
@@ -115,7 +207,10 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
             if (ContainsCMakeCommand(content, "huxerui_add_app")) {
                 return ProjectKind.APPLICATION;
             }
-            return ContainsCMakeCommand(content, "huxerui_add_module") ? ProjectKind.MODULE : ProjectKind.NONE;
+            if (ContainsCMakeCommand(content, "huxerui_add_library")) {
+                return ProjectKind.LIBRARY;
+            }
+            return ProjectKind.NONE;
         } catch (IOException ignored) {
             return ProjectKind.NONE;
         }
@@ -217,7 +312,13 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
     }
 
     public List<HuxerUIDevice> Devices() {
-        return devices_;
+        if (IsRunnableMcpp()) {
+            return List.of(new HuxerUIDevice("mcpp", "", "This Computer", "ready"));
+        }
+        if (Objects.equals(SdkCli(), discovered_sdk_) && !devices_.isEmpty()) {
+            return devices_;
+        }
+        return ImmediateRunDevices(EnabledPlatforms(), HostPlatformId());
     }
 
     boolean MarkSdkPromptShown() {
@@ -229,7 +330,9 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
     }
 
     public void EnsureDevicesLoaded() {
-        if (!devices_.isEmpty() || !HuxerUISettings.getInstance().HasValidSdk()
+        Path cli = SdkCli();
+        if (cli == null || cli.equals(discovered_sdk_)
+                || !com.intellij.ide.trustedProjects.TrustedProjects.isProjectTrusted(project_)
                 || !refresh_scheduled_.compareAndSet(false, true)) {
             return;
         }
@@ -247,25 +350,24 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
     }
 
     public List<HuxerUIDevice> RefreshDevices() throws Exception {
-        List<HuxerUIDevice> result = new ArrayList<>();
-        List<String> enabled = EnabledPlatforms();
-        Exception failure = null;
-        if (enabled.contains("android")) {
-            try {
-                result.addAll(DeviceOutputParser.Parse(
-                        "android",
-                        HuxerUICommand.Capture(HuxerUICommand.ProjectRoot(project_), "devices", "android").getStdout()
-                ));
-            } catch (Exception error) {
-                failure = error;
-            }
+        HuxerUICommand.RequireTrusted(project_);
+        Path home = SdkHome();
+        Path cli = home == null ? null : SdkLayout.FindCli(home);
+        Path root = ApplicationRoot();
+        List<String> enabled = BuildablePlatforms();
+        List<HuxerUIDevice> result = new ArrayList<>(ImmediateRunDevices(enabled, HostPlatformId()));
+        if (cli == null || root == null) {
+            return result;
         }
-        if (enabled.contains("ios") && HostPlatformId().equals("macos")) {
+        Exception failure = null;
+        for (String platform : List.of("android", "ios")) {
+            if (!enabled.contains(platform)) {
+                continue;
+            }
             try {
-                result.addAll(DeviceOutputParser.Parse(
-                        "ios",
-                        HuxerUICommand.Capture(HuxerUICommand.ProjectRoot(project_), "devices", "ios").getStdout()
-                ));
+                var devices = DeviceOutputParser.Parse(platform,
+                        HuxerUICommand.Capture(home, cli, root, List.of("devices", platform)).getStdout());
+                result.addAll(platform.equals("android") ? AndroidDeviceAbis.Load(home, cli, root, devices) : devices);
             } catch (Exception error) {
                 if (failure == null) {
                     failure = error;
@@ -274,31 +376,19 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
                 }
             }
         }
-        String desktop = HostPlatformId();
-        if (enabled.contains(desktop)) {
-            result.add(new HuxerUIDevice(desktop, "local", "This Computer", "ready"));
-        }
-        if (enabled.contains("web")) {
-            result.add(new HuxerUIDevice("web", "chrome", "Chrome", "ready"));
-        }
-        devices_ = List.copyOf(result);
-        boolean selected_available = result.stream().anyMatch(device -> device.IsReady()
-                && device.platform().equals(state_.platform)
-                && device.id().equals(state_.device_id));
-        if (!selected_available) {
-            state_.platform = "";
-            state_.device_id = "";
-            state_.device_name = "";
-        }
+        List<HuxerUIDevice> discovered = List.copyOf(result);
         ApplicationManager.getApplication().invokeLater(() -> {
-            if (!project_.isDisposed() && IsProject()) {
-                DeviceSelectorAction.SyncRunConfigurations(project_, devices_);
+            if (!project_.isDisposed() && cli.equals(SdkCli())) {
+                devices_ = discovered;
+                discovered_sdk_ = cli;
+                DeviceSelectorAction.SyncRunConfigurations(project_, discovered);
+                com.intellij.ide.ActivityTracker.getInstance().inc();
             }
         });
         if (failure != null) {
             throw failure;
         }
-        return devices_;
+        return discovered;
     }
 
     public void SelectDevice(HuxerUIDevice device) {

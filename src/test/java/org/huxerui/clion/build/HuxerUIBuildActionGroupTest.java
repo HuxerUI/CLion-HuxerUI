@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,16 +52,26 @@ final class HuxerUIBuildActionGroupTest {
     }
 
     @Test
-    void doesNotRegisterASeparateDeviceSelector() throws Exception {
+    void registersTheTargetSelectorInTheRunToolbar() throws Exception {
         try (InputStream descriptor = HuxerUIBuildActionGroupTest.class.getResourceAsStream(
                 "/META-INF/plugin.xml")) {
             assertNotNull(descriptor);
             var document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(descriptor);
-            var actions = document.getElementsByTagName("action");
-            for (int action_index = 0; action_index < actions.getLength(); ++action_index) {
-                var id = actions.item(action_index).getAttributes().getNamedItem("id");
-                assertFalse(id != null && id.getNodeValue().equals("HuxerUI.DeviceSelector"));
+            var groups = document.getElementsByTagName("group");
+            boolean registered = false;
+            for (int group_index = 0; group_index < groups.getLength(); ++group_index) {
+                var group = (org.w3c.dom.Element) groups.item(group_index);
+                if (!group.getAttribute("id").equals("HuxerUI.DeviceSelector")) {
+                    continue;
+                }
+                assertTrue(group.getAttribute("popup").equals("true"));
+                var placements = group.getElementsByTagName("add-to-group");
+                for (int index = 0; index < placements.getLength(); ++index) {
+                    var placement = (org.w3c.dom.Element) placements.item(index);
+                    registered |= placement.getAttribute("group-id").equals("RunToolbarMainActionGroup");
+                }
             }
+            assertTrue(registered);
         }
     }
 }
