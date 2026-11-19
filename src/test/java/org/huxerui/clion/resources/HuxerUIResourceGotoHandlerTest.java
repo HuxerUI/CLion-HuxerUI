@@ -7,6 +7,7 @@ import java.io.InputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.fail;
 
 final class HuxerUIResourceGotoHandlerTest {
@@ -38,6 +39,15 @@ final class HuxerUIResourceGotoHandlerTest {
                 new HuxerUIResourceGotoHandler.ResourceReference("raw", "sample_config_json"),
                 HuxerUIResourceGotoHandler.FindReference(source, source.indexOf("sample_config_json"))
         );
+    }
+
+    @Test
+    void navigatesTheResourceIdentifierInAFormattedReference() {
+        String source = "Text(app :: strings :: app_name);";
+
+        assertEquals(new HuxerUIResourceGotoHandler.ResourceReference("strings", "app_name"),
+                HuxerUIResourceGotoHandler.FindReference(source, source.indexOf("app_name")));
+        assertNull(HuxerUIResourceGotoHandler.FindReference(source, source.indexOf("strings")));
     }
 
     @Test

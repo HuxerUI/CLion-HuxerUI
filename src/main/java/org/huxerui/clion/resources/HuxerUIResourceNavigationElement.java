@@ -1,6 +1,7 @@
 package org.huxerui.clion.resources;
 
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
+import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.FakePsiElement;
@@ -45,6 +46,11 @@ final class HuxerUIResourceNavigationElement extends FakePsiElement {
     @Override
     public int getTextOffset() {
         return offset_;
+    }
+
+    @Override
+    public TextRange getTextRange() {
+        return TextRange.from(offset_, 0);
     }
 
     @Override

@@ -1,80 +1,52 @@
 # HuxerUI for CLion
 
-Create, configure, navigate, build, run, debug, and package HuxerUI projects using CLion's native project wizard,
-run configurations, and Build and Run tool windows.
+Create, build, and run [HuxerUI](https://github.com/HuxerUI/HuxerUI) projects from CLion. The plugin integrates SDK selection, project creation, platform and device selection, and C++ editor support.
+
+## Install
+
+Use **Settings → Plugins → Marketplace** to find HuxerUI. To install a local build, choose **Install Plugin from Disk** from the gear menu and select the plugin ZIP.
+
+- CLion 2025.3 or later
+- [HuxerUI SDK](https://github.com/HuxerUI/HuxerUI/releases) or a source checkout with a HuxerUI 0.5.0 or newer CLI for project creation and CMake workflows
+- Native tools for your target platform, plus `mcpp` on `PATH` for mcpp builds and runs
 
 ## Create or open a project
 
-Choose **New Project | HuxerUI | HuxerUI App** or **HuxerUI Library**. Choose CMake or the desktop mcpp preview.
-CMake apps let you select target platforms and enter an optional reverse-domain project ID. For CMake libraries,
-select only the platforms where the library needs native code. No platforms are selected by default. mcpp apps
-offer the App and Navigation templates.
+1. In **New Project**, choose **HuxerUI App** or **HuxerUI Library** and select **CMake** or **mcpp**.
+2. For a CMake app, select its target platforms, including Web if needed. For a CMake library, select only the platforms that need native code. A library starts with no native platforms selected.
+3. Choose a HuxerUI SDK. The wizard selects it automatically when only one is available. **Add SDK** can download a release, browse for a local SDK, or select a source checkout and build its CLI.
+4. Click **Create**. The plugin generates the project with the selected SDK and saves that SDK for the project.
 
-The wizard detects HuxerUI SDKs with a 0.5 or newer CLI and selects the SDK when only one is available.
-Use **Add SDK** to download the latest release, browse for an SDK, or select a source checkout. Selecting a
-checkout can build its standalone CLI in CLion's cache. The wizard uses the selected SDK's templates and binds
-that SDK to the new project. Running or building an existing mcpp project requires `mcpp` on the execution host's
-`PATH`.
+To open an existing project, use **File → Open** and select its root directory. The plugin recognizes CMake apps and libraries from their HuxerUI CMake commands and mcpp projects from their manifest or build rules. A CMake library can run its `examples/preview` app.
 
-CLion finds CMake apps and libraries from active `huxerui_add_app` and `huxerui_add_library` calls in the
-project's root CMake file. Build and Run use a library's `examples/preview` app.
-The plugin also recognizes standalone HuxerUI mcpp projects from their manifest or build rules.
+## Run, build, and package
 
-## Build, run, and package
+- In the Run toolbar, use **Run Target** to choose the local desktop, Web, or an Android or iOS device. The button displays the selected target. Ready devices appear first within each platform. Use **Refresh Devices** to scan again.
+- Use CLion's **Run** and **Debug** for desktop CMake apps. Web and mobile targets run through the HuxerUI CLI. Use **Run → HuxerUI Run with Watch** to rebuild and relaunch a CMake app when sources change.
+- Use **Build → HuxerUI Build and Package** for Debug and Release builds, packaging, and artifact access. **Build with Options** and **Package with Options** let you set ABIs, optimization, and LTO. Compiler diagnostics in the **Build** window link to their source locations.
+- Use **Tools → HuxerUI → Toolchain** to diagnose the environment or preview and apply a supported toolchain setup plan. CLion project trust controls access to project tools.
 
-- Use **Run Target** next to Run and Debug to select a desktop or Web target directly, or pick a device
-  under Android or iOS. The same popup refreshes mobile devices and shows their readiness.
-- Use CLion's **Run** and **Debug** with the desktop CMake configuration. Web and mobile run configurations
-  launch through the HuxerUI CLI. **Run | HuxerUI Run with Watch** starts a CLI session that rebuilds and relaunches
-  when source files change. Use CLion's **Stop** to end a managed session. An app detached by an ordinary launch
-  can be closed through its own UI.
-- Edit a HuxerUI Run configuration to save its target, configuration, ABI list, optimization, LTO, and Watch setting.
-- Use the HuxerUI button beside Run or **Build | HuxerUI Build and Package** for Debug or Release builds and
-  packages. Select **Build with Options** or **Package with Options** to override ABI, optimization, and LTO.
-  Packages default to Release. **Open Artifacts** opens the app or Preview's `dist` directory.
-- Build and toolchain commands stream output to the **Build** window. Compiler diagnostics with source locations
-  become navigable entries. Run output appears in the **Run** window.
+## Edit C++ code
 
-Desktop builds use CLion's CMake profiles and debugger. CLion configures a native profile for the host desktop
-platform and a Web profile when Emscripten's toolchain is available. Gradle and Xcode own mobile builds.
+- Invoke code completion after `[[` or `[[huxerui::` to insert `[[huxerui::composable]]`.
+- In a recognized CMake project, complete resource names such as `app::strings::app_name`, `images::logo`, and `raw::sample_config_json`.
+- Invoke **Go to Declaration** or Ctrl/Cmd-click a resource name to open its source file. String references open the corresponding key in the source catalog.
 
-The C++ editor also completes and navigates `strings::name`, `images::name`, and `raw::name` references directly
-to their source resources. Namespace-qualified references such as `app::strings::name` are supported.
+## Manage SDKs
 
-## SDK and toolchain
+Set **Default SDK** under **Settings → Build, Execution, Deployment → HuxerUI**. The setting applies to projects without a separate SDK binding. The plugin can also discover SDKs from `HUXERUI_HOME`, installed releases, or a nearby source checkout with a built CLI.
 
-- **Settings | Build, Execution, Deployment | HuxerUI** sets the IDE-wide SDK default. The plugin also looks
-  for `HUXERUI_HOME`, an installed SDK, or a nearby source checkout with a built CLI.
-- **Tools | HuxerUI | Select Project SDK** binds the current project to an installed SDK or a source checkout.
-  Pick **Use IDE Default** to clear the project binding. **Install SDK Version** installs and binds a specific
-  release. **Install HuxerUI SDK** installs the latest release.
-- **Build CLI and Use Source Checkout** and **Rebuild Source CLI** build the standalone CLI with the host's CMake
-  and C++ toolchain. The plugin caches the last successful build outside the checkout.
-- **Diagnose Environment** checks prerequisites for Build, Run, or Package on the selected target.
-  **Set Up Toolchain** previews the CLI's setup plan and can install supported prerequisites after confirmation.
-  CLion project trust controls whether the plugin runs project tools.
+Use **Tools → HuxerUI → SDK → Select Project SDK** to change the current project's SDK or choose **Use IDE Default**. **Install SDK Version** downloads a specific release. Downloads are verified with the release's SHA-256 checksum. The SDK menu also offers commands to build or rebuild a source checkout's CLI.
 
-The installer downloads the host archive from the `HuxerUI/HuxerUI` GitHub Release through CLion's configured proxy,
-verifies the release's SHA-256 checksum, and stores releases side by side under `~/.huxerui/sdk`.
-Use an SDK or checkout with a **0.5 or newer CLI** for the current build and run commands.
+## Build from source
 
-## Requirements
+Run Gradle with JDK 21.
 
-- CLion 2025.3 or later.
-- JDK 21 for building the plugin.
-- Native tools for the selected HuxerUI platform on the CLion execution host.
-
-## Build the plugin
-
-```bash
-./gradlew -PclionPath=/path/to/clion test buildPlugin
+```sh
+./gradlew test buildPlugin verifyPluginStructure
 ```
 
-Without `clionPath`, Gradle downloads CLion 2025.3 for the compatibility baseline. The packaged plugin is written
-to `build/distributions/`.
-
-When compiling against a local CLion 2026.2 installation, pass `-PjavaToolchainVersion=25`. The plugin targets
-Java 21 bytecode for the CLion 2025.3 compatibility baseline.
+Gradle downloads CLion 2025.3 by default. To use a local installation, pass `-PclionPath=/path/to/clion`. To compile against a local CLion that requires JDK 25, also pass `-PjavaToolchainVersion=25`. The plugin targets Java 21 bytecode. The ZIP is written to `build/distributions/`.
 
 ## License
 

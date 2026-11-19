@@ -22,6 +22,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 public final class DeviceSelectorAction extends ActionGroup implements DumbAware {
@@ -81,7 +82,9 @@ public final class DeviceSelectorAction extends ActionGroup implements DumbAware
             }
             actions.add(Separator.create(PlatformNames.DisplayName(platform)));
             List<HuxerUIDevice> mobile_devices = devices.stream()
-                    .filter(device -> device.platform().equals(platform)).toList();
+                    .filter(device -> device.platform().equals(platform))
+                    .sorted(Comparator.comparing(HuxerUIDevice::IsReady).reversed())
+                    .toList();
             if (mobile_devices.isEmpty()) {
                 actions.add(new SelectDeviceAction(project,
                         new HuxerUIDevice(platform, "", "", ""), "No devices found"));

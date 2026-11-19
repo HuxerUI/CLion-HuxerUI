@@ -1,13 +1,11 @@
 package org.huxerui.clion.resources;
 
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler;
-import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
-import org.huxerui.clion.project.HuxerUIProjectService;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -16,7 +14,7 @@ import java.util.regex.Pattern;
 
 public final class HuxerUIResourceGotoHandler implements GotoDeclarationHandler {
     private static final Pattern expression = Pattern.compile(
-            "(?:[A-Za-z_][A-Za-z0-9_]*::)*(images|strings|raw)::([A-Za-z_][A-Za-z0-9_]*)"
+            "\\b(?:[A-Za-z_][A-Za-z0-9_]*\\s*::\\s*)*(images|strings|raw)\\s*::\\s*([A-Za-z_][A-Za-z0-9_]*)"
     );
 
     @Override
@@ -25,23 +23,27 @@ public final class HuxerUIResourceGotoHandler implements GotoDeclarationHandler 
             int offset,
             Editor editor
     ) {
-        if (source_element == null) {
+        PsiElement target = source_element == null ? null : FindTarget(source_element.getContainingFile(), editor, offset);
+        return target == null ? null : new PsiElement[]{target};
+    }
+
+    static @Nullable PsiElement FindTarget(@Nullable PsiFile source_file, Editor editor, int offset) {
+        if (source_file == null) {
             return null;
         }
-        Document document = editor.getDocument();
-        ResourceReference reference = FindReference(document.getText(), offset);
+        String language = source_file.getLanguage().getID();
+        if (!language.equals("C++") && !language.equals("ObjectiveC")) {
+            return null;
+        }
+        ResourceReference reference = FindReference(editor.getDocument().getCharsSequence(), offset);
         if (reference == null) {
             return null;
         }
 
-        Project project = source_element.getProject();
-        if (!HuxerUIProjectService.Get(project).IsProject()) {
-            return null;
-        }
-        PsiFile source_file = source_element.getContainingFile();
+        Project project = source_file.getProject();
         List<HuxerUIResourceIndex.Entry> matches =
                 HuxerUIResourceIndex
-                        .Find(project, reference.kind(), source_file == null ? null : source_file.getVirtualFile())
+                        .Find(project, reference.kind(), source_file.getVirtualFile())
                         .stream()
                         .filter(entry -> entry.identifier().equals(reference.identifier()))
                         .toList();
@@ -53,23 +55,20 @@ public final class HuxerUIResourceGotoHandler implements GotoDeclarationHandler 
         if (psi_file == null) {
             return null;
         }
-        return new PsiElement[]{new HuxerUIResourceNavigationElement(
-                psi_file, reference.identifier(), entry.offset())};
+        return reference.kind().equals("strings")
+                ? new HuxerUIResourceNavigationElement(psi_file, reference.identifier(), entry.offset())
+                : psi_file;
     }
 
-    @Override
-    public @Nullable String getActionText(@Nullable com.intellij.openapi.actionSystem.DataContext context) {
-        return "Go to HuxerUI Resource";
-    }
-
-    static @Nullable ResourceReference FindReference(String text, int offset) {
+    static @Nullable ResourceReference FindReference(CharSequence text, int offset) {
+        if (offset < 0 || offset > text.length()) {
+            return null;
+        }
         int start = Math.max(0, offset - 256);
         int end = Math.min(text.length(), offset + 128);
-        Matcher matcher = expression.matcher(text.substring(start, end));
+        Matcher matcher = expression.matcher(text).region(start, end);
         while (matcher.find()) {
-            int absolute_start = start + matcher.start();
-            int absolute_end = start + matcher.end();
-            if (offset >= absolute_start && offset <= absolute_end) {
+            if (offset >= matcher.start(2) && offset <= matcher.end(2)) {
                 return new ResourceReference(matcher.group(1), matcher.group(2));
             }
         }

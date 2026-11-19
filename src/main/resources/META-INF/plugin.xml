@@ -6,6 +6,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.clion</depends>
     <depends>com.intellij.cmake</depends>
+    <depends optional="true" config-file="huxerui-nova.xml">org.jetbrains.plugins.clion.radler</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="org.huxerui.clion.settings.HuxerUISettings"/>
@@ -24,6 +25,10 @@
                 implementationClass="org.huxerui.clion.resources.HuxerUIResourceCompletionContributor"/>
         <completion.contributor language="ObjectiveC"
                 implementationClass="org.huxerui.clion.resources.HuxerUIResourceCompletionContributor"/>
+        <completion.contributor language="C++" order="first"
+                implementationClass="org.huxerui.clion.editor.HuxerUIAttributeCompletionContributor"/>
+        <completion.contributor language="ObjectiveC" order="first"
+                implementationClass="org.huxerui.clion.editor.HuxerUIAttributeCompletionContributor"/>
         <configurationType implementation="org.huxerui.clion.run.HuxerUIConfigurationType"/>
         <postStartupActivity implementation="org.huxerui.clion.project.HuxerUIProjectStartupActivity"/>
         <notificationGroup id="HuxerUI" displayType="BALLOON"/>
