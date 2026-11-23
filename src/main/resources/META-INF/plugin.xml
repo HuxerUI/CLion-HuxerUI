@@ -31,11 +31,19 @@
         <completion.contributor language="ObjectiveC" order="first"
                 implementationClass="org.huxerui.clion.editor.HuxerUIAttributeCompletionContributor"/>
         <configurationType implementation="org.huxerui.clion.run.HuxerUIConfigurationType"/>
+        <editorFactoryListener implementation="org.huxerui.clion.preview.HuxerUIPreviewEditorListener"/>
+        <toolWindow id="HuxerUI Preview" anchor="right" icon="/icons/preview.svg"
+                    factoryClass="org.huxerui.clion.preview.HuxerUIPreviewToolWindowFactory"/>
         <postStartupActivity implementation="org.huxerui.clion.project.HuxerUIProjectStartupActivity"/>
         <notificationGroup id="HuxerUI" displayType="BALLOON"/>
     </extensions>
 
     <actions>
+        <action id="HuxerUI.PreviewAtCaret"
+                class="org.huxerui.clion.preview.HuxerUIPreviewEditorListener$PreviewAtCaret"
+                text="Preview as HuxerUI View">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
         <action id="HuxerUI.InstallSdk"
                 class="org.huxerui.clion.sdk.InstallSdkAction"
                 text="Install HuxerUI SDK..."

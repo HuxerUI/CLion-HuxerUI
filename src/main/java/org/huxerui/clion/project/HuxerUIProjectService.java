@@ -20,6 +20,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -217,6 +218,84 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
     }
 
     static boolean ContainsCMakeCommand(String content, String command) {
+        return FindCMakeCommand(content, command) >= 0;
+    }
+
+    public record ResourceConfig(Path directory, String namespace) {}
+
+    public static @Nullable ResourceConfig ReadResourceConfig(Path root) throws IOException {
+        Path cmake = root.resolve("CMakeLists.txt");
+        if (!Files.isRegularFile(cmake)) {
+            return null;
+        }
+        String content = Files.readString(cmake);
+        int command = FindCMakeCommand(content, "huxerui_add_app");
+        if (command < 0) {
+            command = FindCMakeCommand(content, "huxerui_add_library");
+        }
+        if (command < 0) {
+            return null;
+        }
+
+        List<String> arguments = CMakeArguments(content, command + 1);
+        int resources = arguments.indexOf("RESOURCES") + 1;
+        int namespace = arguments.indexOf("RESOURCE_NAMESPACE") + 1;
+        if (resources == 0 || resources >= arguments.size() || namespace == 0 || namespace >= arguments.size()) {
+            return null;
+        }
+        String directory = arguments.get(resources);
+        String name = arguments.get(namespace);
+        if (directory.isBlank() || directory.contains("$") || directory.contains(";") || directory.contains("\\")
+                || !name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            return null;
+        }
+        try {
+            return new ResourceConfig(root.resolve(directory).normalize(), name);
+        } catch (InvalidPathException ignored) {
+            return null;
+        }
+    }
+
+    private static List<String> CMakeArguments(String content, int start) {
+        List<String> arguments = new ArrayList<>();
+        int offset = SkipWhitespaceAndComments(content, start);
+        while (offset < content.length()) {
+            char character = content.charAt(offset);
+            if (character == ')') {
+                return arguments;
+            }
+            if (character == '(') {
+                break;
+            }
+            int end;
+            int bracket_equals = BracketEquals(content, offset);
+            if (bracket_equals >= 0) {
+                end = SkipBracket(content, offset);
+                int delimiter_length = bracket_equals + 2;
+                if (end - offset < 2 * delimiter_length) {
+                    break;
+                }
+                arguments.add(content.substring(offset + delimiter_length, end - delimiter_length));
+            } else if (character == '"') {
+                end = SkipQuoted(content, offset);
+                if (end - offset < 2) {
+                    break;
+                }
+                arguments.add(content.substring(offset + 1, end - 1));
+            } else {
+                end = offset + 1;
+                while (end < content.length() && !Character.isWhitespace(content.charAt(end))
+                        && "()#".indexOf(content.charAt(end)) < 0) {
+                    ++end;
+                }
+                arguments.add(content.substring(offset, end));
+            }
+            offset = SkipWhitespaceAndComments(content, end);
+        }
+        return List.of();
+    }
+
+    private static int FindCMakeCommand(String content, String command) {
         int offset = 0;
         while (offset < content.length()) {
             char character = content.charAt(offset);
@@ -234,14 +313,14 @@ public final class HuxerUIProjectService implements PersistentStateComponent<Hux
                 String identifier = content.substring(offset, end);
                 int next = SkipWhitespaceAndComments(content, end);
                 if (identifier.equalsIgnoreCase(command) && next < content.length() && content.charAt(next) == '(') {
-                    return true;
+                    return next;
                 }
                 offset = end;
             } else {
                 ++offset;
             }
         }
-        return false;
+        return -1;
     }
 
     private static int SkipWhitespaceAndComments(String content, int offset) {

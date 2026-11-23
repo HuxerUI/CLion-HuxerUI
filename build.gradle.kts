@@ -17,6 +17,8 @@ repositories {
 }
 
 dependencies {
+    implementation("io.github.bonede:tree-sitter:0.26.6")
+    implementation("io.github.bonede:tree-sitter-cpp:0.23.4")
     intellijPlatform {
         if (!clionPath.isPresent) {
             clion("2025.3")
@@ -53,6 +55,7 @@ intellijPlatform {
                 <li>Run and debug desktop apps with CLion. Select Web, Android, or iOS targets from the Run toolbar.</li>
                 <li>Build and package apps, diagnose toolchains, and relaunch on source changes with Watch.</li>
                 <li>Complete composable attributes and navigate from resource references to their source files.</li>
+                <li>Preview CMake Views with sample arguments in a native tool window that refreshes after saves.</li>
             </ul>
             <p>Requires CLion 2025.3 or later. Project creation and CMake workflows require HuxerUI SDK 0.5.0 or later.</p>
             <p><a href="https://github.com/HuxerUI/HuxerUI">HuxerUI documentation and SDK releases</a></p>
@@ -87,6 +90,7 @@ intellijPlatform {
 tasks {
     buildPlugin {
         from(layout.projectDirectory.file("LICENSE"))
+        from(layout.projectDirectory.file("THIRD_PARTY_NOTICES"))
     }
     withType<JavaCompile>().configureEach {
         options.encoding = "UTF-8"

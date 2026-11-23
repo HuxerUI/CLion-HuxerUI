@@ -64,6 +64,24 @@ final class HuxerUIProjectServiceTest {
     }
 
     @Test
+    void readsLiteralResourceConfigurationFromTheHuxerUITarget(@TempDir Path root) throws Exception {
+        WriteCMake(root, """
+                #[=[ huxerui_add_app(fake RESOURCES wrong RESOURCE_NAMESPACE wrong) ]=]
+                huxerui_add_library(widgets
+                    SOURCES ${LIBRARY_SOURCE_FILES}
+                    RESOURCES # Keep the default images and strings together.
+                        [=[shared resources]=]
+                    RESOURCE_NAMESPACE "widgets"
+                )
+                """);
+
+        assertEquals(new HuxerUIProjectService.ResourceConfig(root.resolve("shared resources"), "widgets"),
+                HuxerUIProjectService.ReadResourceConfig(root));
+        WriteCMake(root, "huxerui_add_app(widgets RESOURCES \"\u0024{DIRECTORY}\" RESOURCE_NAMESPACE app)");
+        assertNull(HuxerUIProjectService.ReadResourceConfig(root));
+    }
+
+    @Test
     void doesNotUseGeneratedCachesOrLookalikeDirectoriesForRecognition(@TempDir Path root) throws Exception {
         Files.createDirectories(root.resolve(".huxerui/build"));
         Files.createDirectories(root.resolve("src"));

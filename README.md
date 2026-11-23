@@ -34,6 +34,33 @@ To open an existing project, use **File → Open** and select its root directory
 - In a recognized CMake project, complete resource names such as `app::strings::app_name`, `images::logo`, and `raw::sample_config_json`.
 - Invoke **Go to Declaration** or Ctrl/Cmd-click a resource name to open its source file. String references open the corresponding key in the source catalog.
 
+## Preview a View
+
+In a HuxerUI CMake project, click the preview icon in the gutter beside a function definition that returns `huxerui::View` or `View`. The **HuxerUI Preview** tool window opens and renders as soon as it has a complete sample call.
+
+The preview uses declared C++ defaults and fills common parameters such as numbers, booleans, and strings. Edit **Sample call** and press Enter to try another value or complete a call that needs custom data or a member object. A function callable without arguments starts with the editor collapsed. Use **Edit Sample Call** in the toolbar to open it. For an aliased or deduced return type, right-click inside the function and select **Preview as HuxerUI View**.
+
+```cpp
+#include <huxerui/huxerui.h>
+#include <string>
+
+[[huxerui::composable]]
+huxerui::View Counter(int value) {
+    return huxerui::Text(std::to_string(value));
+}
+
+```
+
+The initial sample call is `::Counter(1)`. To preview another value, change it to `::Counter(42)` and press Enter. The panel refreshes when visible and you save the selected file or save under `src/`, `include/`, `resources/`, `preview/`, or the library's `examples/preview/` directory. It updates automatically generated calls when the function signature changes and keeps calls you have edited. Use **Clear Preview** in the toolbar to stop the current build and end refresh on save until you select a View again. If a build fails, it keeps the previous frame and makes the diagnostics available under **Show output**.
+
+Preview renders natively on the current computer. Choose a phone, large phone, tablet, or desktop viewport, or apply a custom width and height between 1 and 4096 logical pixels. Changing the size reuses the compiled preview app. The preview parser is bundled for macOS and Linux on x64 and arm64, and Windows on x64. Use **Run Target** to run on simulators and physical devices.
+
+The plugin builds a temporary preview app with the selected file and the project's C++ sources under `src/`. It reads literal `RESOURCES` and `RESOURCE_NAMESPACE` arguments from the project's `huxerui_add_app()` or `huxerui_add_library()` call. A View in a library's `examples/preview` can use resources from both the example app and the library. For computed CMake arguments, set `HUXERUI_PREVIEW_RESOURCE_DIR` and `HUXERUI_PREVIEW_RESOURCE_NAMESPACE` in `preview/preview.cmake`. Use the same file to supply extra sources, include paths, or libraries.
+
+```cmake
+list(APPEND HUXERUI_PREVIEW_SOURCES "${HUXERUI_PREVIEW_PROJECT_DIR}/components/format.cpp")
+```
+
 ## Manage SDKs
 
 Set **Default SDK** under **Settings → Build, Execution, Deployment → HuxerUI**. The setting applies to projects without a separate SDK binding. The plugin can also discover SDKs from `HUXERUI_HOME`, installed releases, or a nearby source checkout with a built CLI.
